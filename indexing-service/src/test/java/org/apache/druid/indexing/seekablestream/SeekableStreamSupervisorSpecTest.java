@@ -733,7 +733,7 @@ public class SeekableStreamSupervisorSpecTest extends EasyMockSupport
     Assert.assertEquals(lagBasedAutoScalerConfig.getTaskCountMin(), 1);
     Assert.assertEquals(lagBasedAutoScalerConfig.getScaleInStep(), 1);
     Assert.assertEquals(lagBasedAutoScalerConfig.getScaleOutStep(), 2);
-    Assert.assertEquals(lagBasedAutoScalerConfig.getMinTriggerScaleActionFrequencyMillis(), 600000);
+    Assert.assertEquals(lagBasedAutoScalerConfig.getMinTriggerScaleActionFreqMs(), 600000);
   }
 
   @Test

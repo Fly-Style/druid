@@ -62,7 +62,7 @@ public class LagBasedAutoScalerConfigTest
     Assert.assertEquals(0.9, config.getTriggerScaleInFractionThreshold(), 0.00001);
     Assert.assertEquals(1, config.getScaleInStep());
     Assert.assertEquals(2, config.getScaleOutStep());
-    Assert.assertEquals(600000, config.getMinTriggerScaleActionFrequencyMillis());
+    Assert.assertEquals(600000, config.getMinTriggerScaleActionFreqMs());
     Assert.assertNull(config.getLagAggregate());
     Assert.assertNull(config.getStopTaskCountRatio());
     Assert.assertEquals(0, config.getTaskCountMax());

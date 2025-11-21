@@ -350,7 +350,7 @@ public class KafkaSupervisorIOConfigTest
     Assert.assertEquals(10, kafkaSupervisorIOConfig1.getAutoScalerConfig().getTaskCountMax());
     Assert.assertEquals(
         1200000,
-        kafkaSupervisorIOConfig1.getAutoScalerConfig().getMinTriggerScaleActionFrequencyMillis()
+        kafkaSupervisorIOConfig1.getAutoScalerConfig().getMinTriggerScaleActionFreqMs()
     );
 
     autoScalerConfig.put("taskCountStart", 5);

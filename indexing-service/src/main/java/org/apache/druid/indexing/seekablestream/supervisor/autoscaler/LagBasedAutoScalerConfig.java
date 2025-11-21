@@ -210,7 +210,7 @@ public class LagBasedAutoScalerConfig implements AutoScalerConfig
 
   @Override
   @JsonProperty
-  public long getMinTriggerScaleActionFrequencyMillis()
+  public long getMinTriggerScaleActionFreqMs()
   {
     return minTriggerScaleActionFrequencyMillis;
   }

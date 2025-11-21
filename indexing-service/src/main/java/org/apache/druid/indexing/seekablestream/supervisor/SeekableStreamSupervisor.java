@@ -495,11 +495,11 @@ public abstract class SeekableStreamSupervisor<PartitionIdType, SequenceOffsetTy
               return;
             }
           }
-          if (nowTime - dynamicTriggerLastRunTime < autoScalerConfig.getMinTriggerScaleActionFrequencyMillis()) {
+          if (nowTime - dynamicTriggerLastRunTime < autoScalerConfig.getMinTriggerScaleActionFreqMs()) {
             log.info(
                 "DynamicAllocationTasksNotice submitted again in [%d] millis, minTriggerDynamicFrequency is [%s] for supervisor[%s] for dataSource[%s], skipping it! desired task count is [%s], active task count is [%s]",
                 nowTime - dynamicTriggerLastRunTime,
-                autoScalerConfig.getMinTriggerScaleActionFrequencyMillis(),
+                autoScalerConfig.getMinTriggerScaleActionFreqMs(),
                 supervisorId,
                 dataSource,
                 desiredTaskCount,

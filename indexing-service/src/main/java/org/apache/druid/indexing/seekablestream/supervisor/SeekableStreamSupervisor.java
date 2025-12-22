@@ -3700,6 +3700,9 @@ public abstract class SeekableStreamSupervisor<PartitionIdType, SequenceOffsetTy
             partitionOffsets.put(partitionId, getNotSetMarker());
           }
 
+          // TODO: compute the actual group correctly.
+          // int taskGroupId = getTaskGroupIdForPartition(partition);
+
           // kill all the tasks in this pending completion group
           killTasksInGroup(
               group,

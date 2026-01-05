@@ -19,7 +19,6 @@
 
 package org.apache.druid.indexing.kinesis;
 
-import com.amazonaws.services.kinesis.model.Record;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
@@ -60,6 +59,8 @@ import org.easymock.EasyMock;
 import org.easymock.EasyMockSupport;
 import org.junit.Assert;
 import org.junit.Test;
+import software.amazon.awssdk.core.SdkBytes;
+import software.amazon.awssdk.services.kinesis.model.Record;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -111,9 +112,11 @@ public class KinesisSamplerSpecTest extends EasyMockSupport
             stream,
             "1",
             "6",
-            Collections.singletonList(new KinesisRecordEntity(new Record().withData(ByteBuffer.wrap(StringUtils.toUtf8("unparseable")))))
+            Collections.singletonList(new KinesisRecordEntity(Record.builder().data(SdkBytes.fromByteBuffer(ByteBuffer.wrap(StringUtils.toUtf8("unparseable"))))
+                .build()))
         ),
-        new OrderedPartitionableRecord<>(stream, "1", "8", Collections.singletonList(new KinesisRecordEntity(new Record().withData(ByteBuffer.wrap(StringUtils.toUtf8("{}"))))))
+        new OrderedPartitionableRecord<>(stream, "1", "8", Collections.singletonList(new KinesisRecordEntity(Record.builder().data(SdkBytes.fromByteBuffer(ByteBuffer.wrap(StringUtils.toUtf8("{}"))))
+            .build())))
     );
   }
 
@@ -431,7 +434,7 @@ public class KinesisSamplerSpecTest extends EasyMockSupport
   private static List<KinesisRecordEntity> jb(String ts, String dim1, String dim2, String dimLong, String dimFloat, String met1)
   {
     try {
-      return Collections.singletonList(new KinesisRecordEntity(new Record().withData(ByteBuffer.wrap(new ObjectMapper().writeValueAsBytes(
+      return Collections.singletonList(new KinesisRecordEntity(Record.builder().data(SdkBytes.fromByteBuffer(ByteBuffer.wrap(new ObjectMapper().writeValueAsBytes(
           ImmutableMap.builder()
               .put("timestamp", ts)
               .put("dim1", dim1)
@@ -440,7 +443,8 @@ public class KinesisSamplerSpecTest extends EasyMockSupport
               .put("dimFloat", dimFloat)
               .put("met1", met1)
               .build()
-      )))));
+      ))))
+          .build()));
     }
     catch (Exception e) {
       throw new RuntimeException(e);

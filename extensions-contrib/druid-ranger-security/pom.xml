@@ -205,8 +205,8 @@
              added here to replace bloated bundle sdk, remove this if /when
              apache ranger replaces bundle-skd with logs-sdk  -->
         <dependency>
-            <groupId>com.amazonaws</groupId>
-            <artifactId>aws-java-sdk-logs</artifactId>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>cloudwatchlogs</artifactId>
             <version>${aws.sdk.version}</version>
         </dependency>
         <dependency>

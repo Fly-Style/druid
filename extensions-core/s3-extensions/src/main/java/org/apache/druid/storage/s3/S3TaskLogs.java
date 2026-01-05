@@ -19,9 +19,6 @@
 
 package org.apache.druid.storage.s3;
 
-import com.amazonaws.services.s3.model.AmazonS3Exception;
-import com.amazonaws.services.s3.model.GetObjectRequest;
-import com.amazonaws.services.s3.model.ObjectMetadata;
 import com.google.common.base.Optional;
 import com.google.common.base.Throwables;
 import com.google.inject.Inject;
@@ -30,6 +27,9 @@ import org.apache.druid.java.util.common.IOE;
 import org.apache.druid.java.util.common.StringUtils;
 import org.apache.druid.java.util.common.logger.Logger;
 import org.apache.druid.tasklogs.TaskLogs;
+import software.amazon.awssdk.services.s3.model.GetObjectRequest;
+import software.amazon.awssdk.services.s3.model.HeadObjectResponse;
+import software.amazon.awssdk.services.s3.model.S3Exception;
 
 import java.io.File;
 import java.io.IOException;
@@ -114,12 +114,12 @@ public class S3TaskLogs implements TaskLogs
   private Optional<InputStream> streamTaskFile(final long offset, String taskKey)
   {
     try {
-      final ObjectMetadata objectMetadata = service.getObjectMetadata(config.getS3Bucket(), taskKey);
+      final HeadObjectResponse objectMetadata = service.getObjectMetadata(config.getS3Bucket(), taskKey);
 
       final long start;
-      final long end = objectMetadata.getContentLength() - 1;
+      final long end = objectMetadata.contentLength() - 1;
 
-      long contentLength = objectMetadata.getContentLength();
+      long contentLength = objectMetadata.contentLength();
       if (offset >= contentLength || offset <= -contentLength) {
         start = 0;
       } else if (offset >= 0) {
@@ -128,16 +128,17 @@ public class S3TaskLogs implements TaskLogs
         start = contentLength + offset;
       }
 
-      final GetObjectRequest request = new GetObjectRequest(config.getS3Bucket(), taskKey)
-          .withMatchingETagConstraint(ensureQuotated(objectMetadata.getETag()))
-          .withRange(start, end);
+      final GetObjectRequest request = GetObjectRequest.builder().bucket(config.getS3Bucket()).key(taskKey)
+          .ifMatch(ensureQuotated(objectMetadata.eTag()))
+          .range("bytes=" + start + "-" + end)
+          .build();
 
-      return Optional.of(service.getObject(request).getObjectContent());
+      return Optional.of(service.getObject(request));
     }
-    catch (AmazonS3Exception e) {
-      if (404 == e.getStatusCode()
-          || "NoSuchKey".equals(e.getErrorCode())
-          || "NoSuchBucket".equals(e.getErrorCode())) {
+    catch (S3Exception e) {
+      if (404 == e.awsErrorDetails().sdkHttpResponse().statusCode()
+          || "NoSuchKey".equals(e.awsErrorDetails().errorCode())
+          || "NoSuchBucket".equals(e.awsErrorDetails().errorCode())) {
         return Optional.absent();
       } else {
         throw e;
@@ -228,7 +229,7 @@ public class S3TaskLogs implements TaskLogs
           inputDataConfig.getMaxListingLength(),
           config.getS3Bucket(),
           config.getS3Prefix(),
-          (object) -> object.getLastModified().getTime() < timestamp
+          (object) -> object.lastModified().toEpochMilli() < timestamp
       );
     }
     catch (Exception e) {

@@ -19,13 +19,6 @@
 
 package org.apache.druid.storage.s3;
 
-import com.amazonaws.services.s3.model.AccessControlList;
-import com.amazonaws.services.s3.model.AmazonS3Exception;
-import com.amazonaws.services.s3.model.CanonicalGrantee;
-import com.amazonaws.services.s3.model.Grant;
-import com.amazonaws.services.s3.model.Owner;
-import com.amazonaws.services.s3.model.Permission;
-import com.amazonaws.services.s3.model.PutObjectRequest;
 import com.google.common.io.Files;
 import org.apache.druid.error.DruidException;
 import org.apache.druid.java.util.common.Intervals;
@@ -39,6 +32,16 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.internal.matchers.ThrowableMessageMatcher;
 import org.junit.rules.TemporaryFolder;
+import software.amazon.awssdk.awscore.exception.AwsErrorDetails;
+import software.amazon.awssdk.http.SdkHttpResponse;
+import software.amazon.awssdk.services.s3.model.AccessControlPolicy;
+import software.amazon.awssdk.services.s3.model.Grant;
+import software.amazon.awssdk.services.s3.model.Grantee;
+import software.amazon.awssdk.services.s3.model.Owner;
+import software.amazon.awssdk.services.s3.model.Permission;
+import software.amazon.awssdk.services.s3.model.PutObjectRequest;
+import software.amazon.awssdk.services.s3.model.S3Exception;
+import software.amazon.awssdk.services.s3.model.Type;
 
 import java.io.File;
 import java.io.IOException;
@@ -53,6 +56,35 @@ public class S3DataSegmentPusherTest
 {
   @Rule
   public final TemporaryFolder tempFolder = new TemporaryFolder();
+
+  private static AccessControlPolicy createMockAcl()
+  {
+    Owner owner = Owner.builder()
+        .id("ownerId")
+        .displayName("owner")
+        .build();
+    Grant grant = Grant.builder()
+        .grantee(Grantee.builder().id(owner.id()).type(Type.CANONICAL_USER).build())
+        .permission(Permission.FULL_CONTROL)
+        .build();
+    return AccessControlPolicy.builder()
+        .owner(owner)
+        .grants(grant)
+        .build();
+  }
+
+  private static S3Exception createS3Exception(String message, String errorCode)
+  {
+    return (S3Exception) S3Exception.builder()
+        .message(message)
+        .awsErrorDetails(
+            AwsErrorDetails.builder()
+                .errorCode(errorCode)
+                .sdkHttpResponse(SdkHttpResponse.builder().statusCode(400).build())
+                .build()
+        )
+        .build();
+  }
 
   @Test
   public void testPush() throws Exception
@@ -95,12 +127,9 @@ public class S3DataSegmentPusherTest
   {
     ServerSideEncryptingAmazonS3 s3Client = EasyMock.createStrictMock(ServerSideEncryptingAmazonS3.class);
 
-    final AccessControlList acl = new AccessControlList();
-    acl.setOwner(new Owner("ownerId", "owner"));
-    acl.grantAllPermissions(new Grant(new CanonicalGrantee(acl.getOwner().getId()), Permission.FullControl));
-    EasyMock.expect(s3Client.getBucketAcl(EasyMock.eq("bucket"))).andReturn(acl).once();
+    EasyMock.expect(s3Client.getBucketAcl(EasyMock.eq("bucket"))).andReturn(createMockAcl()).once();
 
-    s3Client.upload(EasyMock.anyObject(PutObjectRequest.class));
+    s3Client.upload(EasyMock.anyObject(PutObjectRequest.class), EasyMock.anyObject(File.class));
     EasyMock.expectLastCall().once();
 
     EasyMock.replay(s3Client);
@@ -122,12 +151,9 @@ public class S3DataSegmentPusherTest
   {
     ServerSideEncryptingAmazonS3 s3Client = EasyMock.createStrictMock(ServerSideEncryptingAmazonS3.class);
 
-    final AccessControlList acl = new AccessControlList();
-    acl.setOwner(new Owner("ownerId", "owner"));
-    acl.grantAllPermissions(new Grant(new CanonicalGrantee(acl.getOwner().getId()), Permission.FullControl));
-    EasyMock.expect(s3Client.getBucketAcl(EasyMock.eq("bucket"))).andReturn(acl).once();
+    EasyMock.expect(s3Client.getBucketAcl(EasyMock.eq("bucket"))).andReturn(createMockAcl()).once();
 
-    s3Client.upload(EasyMock.anyObject(PutObjectRequest.class));
+    s3Client.upload(EasyMock.anyObject(PutObjectRequest.class), EasyMock.anyObject(File.class));
     EasyMock.expectLastCall().once();
 
     EasyMock.replay(s3Client);
@@ -138,16 +164,11 @@ public class S3DataSegmentPusherTest
   private void testPushInternalForEntityTooLarge(boolean useUniquePath, String matcher) throws Exception
   {
     ServerSideEncryptingAmazonS3 s3Client = EasyMock.createStrictMock(ServerSideEncryptingAmazonS3.class);
-    final AmazonS3Exception e = new AmazonS3Exception("whoa too many bytes");
-    e.setErrorCode(S3Utils.ERROR_ENTITY_TOO_LARGE);
+    final S3Exception e = createS3Exception("whoa too many bytes", S3Utils.ERROR_ENTITY_TOO_LARGE);
 
+    EasyMock.expect(s3Client.getBucketAcl(EasyMock.eq("bucket"))).andReturn(createMockAcl()).once();
 
-    final AccessControlList acl = new AccessControlList();
-    acl.setOwner(new Owner("ownerId", "owner"));
-    acl.grantAllPermissions(new Grant(new CanonicalGrantee(acl.getOwner().getId()), Permission.FullControl));
-    EasyMock.expect(s3Client.getBucketAcl(EasyMock.eq("bucket"))).andReturn(acl).once();
-
-    s3Client.upload(EasyMock.anyObject(PutObjectRequest.class));
+    s3Client.upload(EasyMock.anyObject(PutObjectRequest.class), EasyMock.anyObject(File.class));
     EasyMock.expectLastCall().andThrow(e).once();
 
     EasyMock.replay(s3Client);

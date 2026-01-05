@@ -19,17 +19,6 @@
 
 package org.apache.druid.data.input.s3;
 
-import com.amazonaws.Protocol;
-import com.amazonaws.auth.AWSCredentialsProvider;
-import com.amazonaws.auth.AWSSessionCredentials;
-import com.amazonaws.auth.AWSStaticCredentialsProvider;
-import com.amazonaws.auth.BasicAWSCredentials;
-import com.amazonaws.auth.BasicSessionCredentials;
-import com.amazonaws.auth.STSAssumeRoleSessionCredentialsProvider;
-import com.amazonaws.client.builder.AwsClientBuilder;
-import com.amazonaws.services.s3.model.ObjectMetadata;
-import com.amazonaws.services.securitytoken.AWSSecurityTokenService;
-import com.amazonaws.services.securitytoken.AWSSecurityTokenServiceClientBuilder;
 import com.fasterxml.jackson.annotation.JacksonInject;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonIgnore;
@@ -57,6 +46,15 @@ import org.apache.druid.storage.s3.S3InputDataConfig;
 import org.apache.druid.storage.s3.S3StorageDruidModule;
 import org.apache.druid.storage.s3.S3Utils;
 import org.apache.druid.storage.s3.ServerSideEncryptingAmazonS3;
+import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
+import software.amazon.awssdk.auth.credentials.AwsCredentialsProvider;
+import software.amazon.awssdk.auth.credentials.AwsSessionCredentials;
+import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
+import software.amazon.awssdk.regions.Region;
+import software.amazon.awssdk.services.s3.S3Configuration;
+import software.amazon.awssdk.services.s3.model.HeadObjectResponse;
+import software.amazon.awssdk.services.sts.StsClient;
+import software.amazon.awssdk.services.sts.auth.StsAssumeRoleCredentialsProvider;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
@@ -108,7 +106,7 @@ public class S3InputSource extends CloudObjectInputSource
       @JacksonInject ServerSideEncryptingAmazonS3 s3Client,
       @JacksonInject ServerSideEncryptingAmazonS3.Builder s3ClientBuilder,
       @JacksonInject S3InputDataConfig inputDataConfig,
-      @JacksonInject AWSCredentialsProvider awsCredentialsProvider,
+      @JacksonInject AwsCredentialsProvider awsCredentialsProvider,
       @JsonProperty("uris") @Nullable List<URI> uris,
       @JsonProperty("prefixes") @Nullable List<URI> prefixes,
       @JsonProperty("objects") @Nullable List<CloudObjectLocation> objects,
@@ -133,35 +131,27 @@ public class S3InputSource extends CloudObjectInputSource
           if (s3ClientBuilder != null && s3InputSourceConfig != null) {
             if (awsEndpointConfig != null && awsEndpointConfig.getUrl() != null) {
               s3ClientBuilder
-                  .getAmazonS3ClientBuilder().setEndpointConfiguration(
-                      new AwsClientBuilder.EndpointConfiguration(
-                          awsEndpointConfig.getUrl(),
-                          awsEndpointConfig.getSigningRegion()
-                      ));
+                  .getAmazonS3ClientBuilder()
+                  .endpointOverride(URI.create(awsEndpointConfig.getUrl()));
+              if (awsEndpointConfig.getSigningRegion() != null) {
+                s3ClientBuilder
+                    .getAmazonS3ClientBuilder()
+                    .region(Region.of(awsEndpointConfig.getSigningRegion()));
+              }
               if (awsClientConfig != null) {
                 s3ClientBuilder
                     .getAmazonS3ClientBuilder()
-                    .withChunkedEncodingDisabled(awsClientConfig.isDisableChunkedEncoding())
-                    .withPathStyleAccessEnabled(awsClientConfig.isEnablePathStyleAccess())
-                    .withForceGlobalBucketAccessEnabled(awsClientConfig.isForceGlobalBucketAccessEnabled());
-
-                if (awsProxyConfig != null) {
-                  final Protocol protocol = S3Utils.determineProtocol(awsClientConfig, awsEndpointConfig);
-                  s3ClientBuilder
-                      .getAmazonS3ClientBuilder()
-                      .withClientConfiguration(S3Utils.setProxyConfig(
-                          s3ClientBuilder.getAmazonS3ClientBuilder()
-                                         .getClientConfiguration(),
-                          awsProxyConfig
-                      ).withProtocol(protocol));
-                }
+                    .serviceConfiguration(S3Configuration.builder()
+                        .chunkedEncodingEnabled(!awsClientConfig.isDisableChunkedEncoding())
+                        .pathStyleAccessEnabled(awsClientConfig.isEnablePathStyleAccess())
+                        .build());
               }
             }
             if (s3InputSourceConfig.isCredentialsConfigured()) {
               if (s3InputSourceConfig.getAssumeRoleArn() == null) {
                 s3ClientBuilder
                     .getAmazonS3ClientBuilder()
-                    .withCredentials(createStaticCredentialsProvider(s3InputSourceConfig));
+                    .credentialsProvider(createStaticCredentialsProvider(s3InputSourceConfig));
               } else {
                 applyAssumeRole(
                     s3ClientBuilder,
@@ -259,45 +249,46 @@ public class S3InputSource extends CloudObjectInputSource
   private void applyAssumeRole(
       ServerSideEncryptingAmazonS3.Builder s3ClientBuilder,
       S3InputSourceConfig s3InputSourceConfig,
-      AWSCredentialsProvider awsCredentialsProvider
+      AwsCredentialsProvider awsCredentialsProvider
   )
   {
     String assumeRoleArn = s3InputSourceConfig.getAssumeRoleArn();
     if (assumeRoleArn != null) {
       String roleSessionName = StringUtils.format("druid-s3-input-source-%s", UUID.randomUUID().toString());
-      AWSSecurityTokenService securityTokenService = AWSSecurityTokenServiceClientBuilder.standard()
-                                                                                         .withCredentials(
-                                                                                             awsCredentialsProvider)
-                                                                                         .build();
-      STSAssumeRoleSessionCredentialsProvider.Builder roleCredentialsProviderBuilder;
-      roleCredentialsProviderBuilder = new STSAssumeRoleSessionCredentialsProvider
-          .Builder(assumeRoleArn, roleSessionName).withStsClient(securityTokenService);
+      StsClient securityTokenService = StsClient.builder()
+          .credentialsProvider(awsCredentialsProvider)
+          .build();
 
-      if (s3InputSourceConfig.getAssumeRoleExternalId() != null) {
-        roleCredentialsProviderBuilder.withExternalId(s3InputSourceConfig.getAssumeRoleExternalId());
-      }
+      StsAssumeRoleCredentialsProvider.Builder roleCredentialsProviderBuilder =
+          StsAssumeRoleCredentialsProvider.builder()
+              .stsClient(securityTokenService)
+              .refreshRequest(requestBuilder -> {
+                requestBuilder.roleArn(assumeRoleArn);
+                requestBuilder.roleSessionName(roleSessionName);
+                if (s3InputSourceConfig.getAssumeRoleExternalId() != null) {
+                  requestBuilder.externalId(s3InputSourceConfig.getAssumeRoleExternalId());
+                }
+              });
 
-      s3ClientBuilder.getAmazonS3ClientBuilder().withCredentials(roleCredentialsProviderBuilder.build());
+      s3ClientBuilder.getAmazonS3ClientBuilder().credentialsProvider(roleCredentialsProviderBuilder.build());
     }
   }
 
   @Nonnull
-  private AWSStaticCredentialsProvider createStaticCredentialsProvider(S3InputSourceConfig s3InputSourceConfig)
+  private StaticCredentialsProvider createStaticCredentialsProvider(S3InputSourceConfig s3InputSourceConfig)
   {
     if (s3InputSourceConfig.getSessionToken() != null) {
-      AWSSessionCredentials sessionCredentials = new BasicSessionCredentials(
+      AwsSessionCredentials sessionCredentials = AwsSessionCredentials.create(
           s3InputSourceConfig.getAccessKeyId().getPassword(),
           s3InputSourceConfig.getSecretAccessKey().getPassword(),
           s3InputSourceConfig.getSessionToken().getPassword()
       );
-      return new AWSStaticCredentialsProvider(sessionCredentials);
+      return StaticCredentialsProvider.create(sessionCredentials);
     } else {
-      return new AWSStaticCredentialsProvider(
-          new BasicAWSCredentials(
-              s3InputSourceConfig.getAccessKeyId().getPassword(),
-              s3InputSourceConfig.getSecretAccessKey().getPassword()
-          )
-      );
+      return StaticCredentialsProvider.create(AwsBasicCredentials.create(
+          s3InputSourceConfig.getAccessKeyId().getPassword(),
+          s3InputSourceConfig.getSecretAccessKey().getPassword()
+      ));
     }
   }
 
@@ -354,20 +345,20 @@ public class S3InputSource extends CloudObjectInputSource
                 inputDataConfig.getMaxListingLength(),
                 maxRetries
             ),
-            object -> new LocationWithSize(object.getBucketName(), object.getKey(), object.getSize())
+            objectSummary -> new LocationWithSize(objectSummary.bucket(), objectSummary.key(), objectSummary.size())
         );
       }
 
       @Override
       public long getObjectSize(CloudObjectLocation location)
       {
-        final ObjectMetadata objectMetadata = S3Utils.getSingleObjectMetadata(
+        final HeadObjectResponse objectMetadata = S3Utils.getSingleObjectMetadata(
             s3ClientSupplier.get(),
             location.getBucket(),
             location.getPath()
         );
 
-        return objectMetadata.getContentLength();
+        return objectMetadata.contentLength();
       }
     }
 

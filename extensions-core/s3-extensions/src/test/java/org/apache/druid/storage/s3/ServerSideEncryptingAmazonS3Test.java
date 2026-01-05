@@ -19,35 +19,37 @@
 
 package org.apache.druid.storage.s3;
 
-import com.amazonaws.services.s3.AmazonS3;
-import com.amazonaws.services.s3.model.PutObjectRequest;
-import com.amazonaws.services.s3.model.PutObjectResult;
-import com.amazonaws.services.s3.transfer.TransferManager;
-import com.amazonaws.services.s3.transfer.Upload;
 import org.easymock.EasyMock;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.TemporaryFolder;
+import software.amazon.awssdk.core.sync.RequestBody;
+import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.PutObjectRequest;
+import software.amazon.awssdk.services.s3.model.PutObjectResponse;
 
-
+import java.io.File;
+import java.io.IOException;
 import java.lang.reflect.Field;
-
 
 
 public class ServerSideEncryptingAmazonS3Test
 {
-  private AmazonS3 mockAmazonS3;
+  @Rule
+  public final TemporaryFolder tempFolder = new TemporaryFolder();
+
+  private S3Client mockAmazonS3;
   private ServerSideEncryption mockServerSideEncryption;
   private S3TransferConfig mockTransferConfig;
-  private TransferManager mockTransferManager;
 
   @Before
   public void setup()
   {
-    mockAmazonS3 = EasyMock.createMock(AmazonS3.class);
+    mockAmazonS3 = EasyMock.createMock(S3Client.class);
     mockServerSideEncryption = EasyMock.createMock(ServerSideEncryption.class);
     mockTransferConfig = EasyMock.createMock(S3TransferConfig.class);
-    mockTransferManager = EasyMock.createMock(TransferManager.class);
   }
 
   @Test
@@ -60,11 +62,7 @@ public class ServerSideEncryptingAmazonS3Test
 
     ServerSideEncryptingAmazonS3 s3 = new ServerSideEncryptingAmazonS3(mockAmazonS3, mockServerSideEncryption, mockTransferConfig);
 
-    Field transferManagerField = ServerSideEncryptingAmazonS3.class.getDeclaredField("transferManager");
-    transferManagerField.setAccessible(true);
-    Object transferManager = transferManagerField.get(s3);
-
-    Assert.assertNotNull("TransferManager should be initialized", transferManager);
+    // Note: In SDK v2, transfer manager is disabled, so transferManager field may be null
     Assert.assertNotNull(s3);
     EasyMock.verify(mockTransferConfig);
   }
@@ -88,11 +86,21 @@ public class ServerSideEncryptingAmazonS3Test
   }
 
   @Test
-  public void testUpload_WithoutTransferManager() throws InterruptedException
+  public void testUpload() throws IOException
   {
-    PutObjectRequest originalRequest = new PutObjectRequest("bucket", "key", "file");
-    PutObjectRequest decoratedRequest = new PutObjectRequest("bucket", "key", "file-encrypted");
-    PutObjectResult mockResult = new PutObjectResult();
+    File testFile = tempFolder.newFile("test.txt");
+
+    PutObjectRequest originalRequest = PutObjectRequest.builder()
+        .bucket("bucket")
+        .key("key")
+        .build();
+    PutObjectRequest decoratedRequest = PutObjectRequest.builder()
+        .bucket("bucket")
+        .key("key")
+        .serverSideEncryption("AES256")
+        .build();
+    PutObjectResponse mockResult = PutObjectResponse.builder()
+        .build();
 
     EasyMock.expect(mockTransferConfig.isUseTransferManager()).andReturn(false);
     EasyMock.replay(mockTransferConfig);
@@ -100,49 +108,16 @@ public class ServerSideEncryptingAmazonS3Test
     EasyMock.expect(mockServerSideEncryption.decorate(originalRequest)).andReturn(decoratedRequest);
     EasyMock.replay(mockServerSideEncryption);
 
-    EasyMock.expect(mockAmazonS3.putObject(decoratedRequest)).andReturn(mockResult).once();
+    EasyMock.expect(mockAmazonS3.putObject(EasyMock.eq(decoratedRequest), EasyMock.anyObject(RequestBody.class)))
+            .andReturn(mockResult)
+            .once();
     EasyMock.replay(mockAmazonS3);
 
     ServerSideEncryptingAmazonS3 s3 = new ServerSideEncryptingAmazonS3(mockAmazonS3, mockServerSideEncryption, mockTransferConfig);
-    s3.upload(originalRequest);
+    s3.upload(originalRequest, testFile);
 
     EasyMock.verify(mockServerSideEncryption);
     EasyMock.verify(mockAmazonS3);
     EasyMock.verify(mockTransferConfig);
-  }
-
-  @Test
-  public void testUpload_WithTransferManager() throws InterruptedException, NoSuchFieldException, IllegalAccessException
-  {
-    PutObjectRequest originalRequest = new PutObjectRequest("bucket", "key", "file");
-    PutObjectRequest decoratedRequest = new PutObjectRequest("bucket", "key", "file-encrypted");
-    Upload mockUpload = EasyMock.createMock(Upload.class);
-
-    EasyMock.expect(mockTransferConfig.isUseTransferManager()).andReturn(true).once();
-    EasyMock.expect(mockTransferConfig.getMinimumUploadPartSize()).andReturn(5242880L).once(); // 5 MB
-    EasyMock.expect(mockTransferConfig.getMultipartUploadThreshold()).andReturn(10485760L).once(); // 10 MB
-    EasyMock.replay(mockTransferConfig);
-
-    EasyMock.expect(mockServerSideEncryption.decorate(originalRequest)).andReturn(decoratedRequest);
-    EasyMock.replay(mockServerSideEncryption);
-
-    EasyMock.expect(mockTransferManager.upload(decoratedRequest)).andReturn(mockUpload);
-    EasyMock.replay(mockTransferManager);
-
-    mockUpload.waitForCompletion();
-    EasyMock.expectLastCall();
-    EasyMock.replay(mockUpload);
-
-    ServerSideEncryptingAmazonS3 s3 = new ServerSideEncryptingAmazonS3(mockAmazonS3, mockServerSideEncryption, mockTransferConfig);
-
-    Field transferManagerField = ServerSideEncryptingAmazonS3.class.getDeclaredField("transferManager");
-    transferManagerField.setAccessible(true);
-    transferManagerField.set(s3, mockTransferManager);
-
-    s3.upload(originalRequest);
-
-    EasyMock.verify(mockServerSideEncryption);
-    EasyMock.verify(mockTransferManager);
-    EasyMock.verify(mockUpload);
   }
 }

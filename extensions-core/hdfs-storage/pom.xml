@@ -48,8 +48,8 @@
             <scope>runtime</scope>
             <exclusions>
                 <exclusion>
-                    <groupId>com.amazonaws</groupId>
-                    <artifactId>aws-java-sdk-bundle</artifactId>
+                    <groupId>software.amazon.awssdk</groupId>
+                    <artifactId>bundle</artifactId>
                 </exclusion>
             </exclusions>
         </dependency>
@@ -167,8 +167,8 @@
                     <scope>test</scope>
                 </dependency>
                 <dependency>
-                    <groupId>com.amazonaws</groupId>
-                    <artifactId>aws-java-sdk-s3</artifactId>
+                    <groupId>software.amazon.awssdk</groupId>
+                    <artifactId>s3</artifactId>
                     <scope>runtime</scope>
                 </dependency>
                 <dependency>

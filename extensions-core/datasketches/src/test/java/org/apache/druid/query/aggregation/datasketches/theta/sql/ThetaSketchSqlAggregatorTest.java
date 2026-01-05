@@ -292,43 +292,43 @@ public class ThetaSketchSqlAggregatorTest extends BaseCalciteQueryTest
             GroupByQuery.builder()
                         .setDataSource(
                             new QueryDataSource(Druids.newTimeseriesQueryBuilder()
-                                                      .dataSource(CalciteTests.DATASOURCE1)
-                                                      .intervals(new MultipleIntervalSegmentSpec(ImmutableList.of(
-                                                          Filtration.eternity()
-                                                      )))
-                                                      .granularity(new PeriodGranularity(
-                                                          Period.days(1),
-                                                          null,
-                                                          DateTimeZone.UTC
-                                                      ))
-                                                      .aggregators(
-                                                          Collections.singletonList(
-                                                              new SketchMergeAggregatorFactory(
-                                                                  "a0:a",
-                                                                  "cnt",
-                                                                  null,
-                                                                  null,
-                                                                  null,
-                                                                  null
-                                                              )
-                                                          )
-                                                      )
-                                                      .postAggregators(
-                                                          ImmutableList.of(
-                                                              new FinalizingFieldAccessPostAggregator(
-                                                                  "a0",
-                                                                  "a0:a"
-                                                              )
-                                                          )
-                                                      )
-                                                      .context(TIMESERIES_CONTEXT_BY_GRAN)
-                                                      .build()
-                                                      .withOverriddenContext(
-                                                          BaseCalciteQueryTest.getTimeseriesContextWithFloorTime(
-                                                              TIMESERIES_CONTEXT_BY_GRAN,
-                                                              "d0"
-                                                          )
-                                                      )
+                                .dataSource(CalciteTests.DATASOURCE1)
+                                .intervals(new MultipleIntervalSegmentSpec(ImmutableList.of(
+                                    Filtration.eternity()
+                                )))
+                                .granularity(new PeriodGranularity(
+                                    Period.days(1),
+                                    null,
+                                    DateTimeZone.UTC
+                                ))
+                                .aggregators(
+                                    Collections.singletonList(
+                                        new SketchMergeAggregatorFactory(
+                                            "a0:a",
+                                            "cnt",
+                                            null,
+                                            null,
+                                            null,
+                                            null
+                                        )
+                                    )
+                                )
+                                .postAggregators(
+                                    ImmutableList.of(
+                                        new FinalizingFieldAccessPostAggregator(
+                                            "a0",
+                                            "a0:a"
+                                        )
+                                    )
+                                )
+                                .context(TIMESERIES_CONTEXT_BY_GRAN)
+                                .withOverriddenContext(
+                                    BaseCalciteQueryTest.getTimeseriesContextWithFloorTime(
+                                        TIMESERIES_CONTEXT_BY_GRAN,
+                                        "d0"
+                                    )
+                                )
+                                .build()
                             )
                         )
                         .setInterval(new MultipleIntervalSegmentSpec(ImmutableList.of(Filtration.eternity())))

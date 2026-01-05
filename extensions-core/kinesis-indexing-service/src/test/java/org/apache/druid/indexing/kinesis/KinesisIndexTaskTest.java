@@ -19,7 +19,6 @@
 
 package org.apache.druid.indexing.kinesis;
 
-import com.amazonaws.services.kinesis.model.Record;
 import com.fasterxml.jackson.annotation.JacksonInject;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
@@ -98,6 +97,8 @@ import org.junit.BeforeClass;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
+import software.amazon.awssdk.core.SdkBytes;
+import software.amazon.awssdk.services.kinesis.model.Record;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
@@ -136,9 +137,12 @@ public class KinesisIndexTaskTest extends SeekableStreamIndexTaskTestBase
       createRecord("1", "3", kjb("2011", "d", "y", "10", "20.0", "1.0")),
       createRecord("1", "4", kjb("2011", "e", "y", "10", "20.0", "1.0")),
       createRecord("1", "5", kjb("246140482-04-24T15:36:27.903Z", "x", "z", "10", "20.0", "1.0")),
-      createRecord("1", "6", new KinesisRecordEntity(new Record().withData(new ByteEntity(StringUtils.toUtf8("unparseable")).getBuffer()))),
-      createRecord("1", "7", new KinesisRecordEntity(new Record().withData(new ByteEntity(StringUtils.toUtf8("")).getBuffer()))),
-      createRecord("1", "8", new KinesisRecordEntity(new Record().withData(new ByteEntity(StringUtils.toUtf8("{}")).getBuffer()))),
+      createRecord("1", "6", new KinesisRecordEntity(Record.builder().data(SdkBytes.fromByteBuffer(new ByteEntity(StringUtils.toUtf8("unparseable")).getBuffer()))
+          .build())),
+      createRecord("1", "7", new KinesisRecordEntity(Record.builder().data(SdkBytes.fromByteBuffer(new ByteEntity(StringUtils.toUtf8("")).getBuffer()))
+          .build())),
+      createRecord("1", "8", new KinesisRecordEntity(Record.builder().data(SdkBytes.fromByteBuffer(new ByteEntity(StringUtils.toUtf8("{}")).getBuffer()))
+          .build())),
       createRecord("1", "9", kjb("2013", "f", "y", "10", "20.0", "1.0")),
       createRecord("1", "10", kjb("2049", "f", "y", "notanumber", "20.0", "1.0")),
       createRecord("1", "11", kjb("2049", "f", "y", "10", "notanumber", "1.0")),
@@ -266,7 +270,8 @@ public class KinesisIndexTaskTest extends SeekableStreamIndexTaskTestBase
         record.getPartitionId(),
         record.getSequenceNumber(),
         record.getData().stream()
-              .map(entity -> new KinesisRecordEntity(new Record().withData(entity.getBuffer())))
+              .map(entity -> new KinesisRecordEntity(Record.builder().data(SdkBytes.fromByteBuffer(entity.getBuffer()))
+                  .build()))
               .collect(Collectors.toList())
     );
   }
@@ -2497,7 +2502,8 @@ public class KinesisIndexTaskTest extends SeekableStreamIndexTaskTestBase
       String met1
   )
   {
-    return new KinesisRecordEntity(new Record().withData(jb(timestamp, dim1, dim2, dimLong, dimFloat, met1).getBuffer()));
+    return new KinesisRecordEntity(Record.builder().data(SdkBytes.fromByteBuffer(jb(timestamp, dim1, dim2, dimLong, dimFloat, met1).getBuffer()))
+        .build());
   }
 
   @JsonTypeName("index_kinesis")

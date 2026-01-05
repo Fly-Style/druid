@@ -19,13 +19,13 @@
 
 package org.apache.druid.storage.s3;
 
-import com.amazonaws.services.s3.model.AmazonS3Exception;
-import com.amazonaws.services.s3.model.ListObjectsV2Request;
-import com.amazonaws.services.s3.model.ListObjectsV2Result;
-import com.amazonaws.services.s3.model.S3ObjectSummary;
 import com.google.common.annotations.VisibleForTesting;
 import org.apache.druid.java.util.common.RE;
 import org.apache.druid.java.util.common.RetryUtils;
+import software.amazon.awssdk.services.s3.model.ListObjectsV2Request;
+import software.amazon.awssdk.services.s3.model.ListObjectsV2Response;
+import software.amazon.awssdk.services.s3.model.S3Exception;
+import software.amazon.awssdk.services.s3.model.S3Object;
 
 import java.net.URI;
 import java.util.Iterator;
@@ -44,9 +44,10 @@ public class ObjectSummaryIterator implements Iterator<S3ObjectSummary>
   private final int maxListingLength;
 
   private ListObjectsV2Request request;
-  private ListObjectsV2Result result;
-  private Iterator<S3ObjectSummary> objectSummaryIterator;
+  private ListObjectsV2Response result;
+  private Iterator<S3Object> objectSummaryIterator;
   private S3ObjectSummary currentObjectSummary;
+  private String currentBucket;
   private int maxRetries; // this is made available for testing mostly
 
 
@@ -111,28 +112,29 @@ public class ObjectSummaryIterator implements Iterator<S3ObjectSummary>
   private void prepareNextRequest()
   {
     final URI currentUri = prefixesIterator.next();
-    final String currentBucket = currentUri.getAuthority();
+    currentBucket = currentUri.getAuthority();
     final String currentPrefix = S3Utils.extractS3Key(currentUri);
 
-    request = new ListObjectsV2Request()
-        .withBucketName(currentBucket)
-        .withPrefix(currentPrefix)
-        .withMaxKeys(maxListingLength);
+    request = ListObjectsV2Request.builder()
+        .bucket(currentBucket)
+        .prefix(currentPrefix)
+        .maxKeys(maxListingLength)
+        .build();
   }
 
   private void fetchNextBatch()
   {
     try {
       result = S3Utils.retryS3Operation(() -> s3Client.listObjectsV2(request), maxRetries);
-      request.setContinuationToken(result.getNextContinuationToken());
-      objectSummaryIterator = result.getObjectSummaries().iterator();
+      request = request.toBuilder().continuationToken(result.nextContinuationToken()).build();
+      objectSummaryIterator = result.contents().iterator();
     }
-    catch (AmazonS3Exception e) {
+    catch (S3Exception e) {
       throw new RE(
           e,
           "Failed to get object summaries from S3 bucket[%s], prefix[%s]; S3 error: %s",
-          request.getBucketName(),
-          request.getPrefix(),
+          request.bucket(),
+          request.prefix(),
           e.getMessage()
       );
     }
@@ -140,8 +142,8 @@ public class ObjectSummaryIterator implements Iterator<S3ObjectSummary>
       throw new RE(
           e,
           "Failed to get object summaries from S3 bucket[%s], prefix[%s]",
-          request.getBucketName(),
-          request.getPrefix()
+          request.bucket(),
+          request.prefix()
       );
     }
   }
@@ -153,9 +155,10 @@ public class ObjectSummaryIterator implements Iterator<S3ObjectSummary>
   {
     while (objectSummaryIterator.hasNext() || result.isTruncated() || prefixesIterator.hasNext()) {
       while (objectSummaryIterator.hasNext()) {
-        currentObjectSummary = objectSummaryIterator.next();
+        S3Object s3Object = objectSummaryIterator.next();
         // skips directories and empty objects
-        if (!isDirectoryPlaceholder(currentObjectSummary) && currentObjectSummary.getSize() > 0) {
+        if (!isDirectoryPlaceholder(s3Object) && s3Object.size() > 0) {
+          currentObjectSummary = new S3ObjectSummary(currentBucket, s3Object);
           return;
         }
       }
@@ -180,20 +183,20 @@ public class ObjectSummaryIterator implements Iterator<S3ObjectSummary>
    * legacy JetS3t directory placeholder objects, since it is based on content-type, which isn't available in an
    * S3ObjectSummary.
    */
-  private static boolean isDirectoryPlaceholder(final S3ObjectSummary objectSummary)
+  private static boolean isDirectoryPlaceholder(final S3Object objectSummary)
   {
     // Recognize "standard" directory place-holder indications used by Amazon's AWS Console and Panic's Transmit.
-    if (objectSummary.getKey().endsWith("/") && objectSummary.getSize() == 0) {
+    if (objectSummary.key().endsWith("/") && objectSummary.size() == 0) {
       return true;
     }
 
     // Recognize s3sync.rb directory placeholders by MD5/ETag value.
-    if ("d66759af42f282e1ba19144df2d405d0".equals(objectSummary.getETag())) {
+    if ("d66759af42f282e1ba19144df2d405d0".equals(objectSummary.eTag())) {
       return true;
     }
 
     // Recognize place-holder objects created by the Google Storage console or S3 Organizer Firefox extension.
-    if (objectSummary.getKey().endsWith("_$folder$") && objectSummary.getSize() == 0) {
+    if (objectSummary.key().endsWith("_$folder$") && objectSummary.size() == 0) {
       return true;
     }
 

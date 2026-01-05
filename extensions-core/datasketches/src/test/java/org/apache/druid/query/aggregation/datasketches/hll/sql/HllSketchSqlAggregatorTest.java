@@ -395,42 +395,42 @@ public class HllSketchSqlAggregatorTest extends BaseCalciteQueryTest
                         .setDataSource(
                             new QueryDataSource(
                                 Druids.newTimeseriesQueryBuilder()
-                                      .dataSource(CalciteTests.DATASOURCE1)
-                                      .intervals(new MultipleIntervalSegmentSpec(ImmutableList.of(
-                                          Filtration.eternity()
-                                      )))
-                                      .granularity(new PeriodGranularity(Period.days(1), null, DateTimeZone.UTC))
-                                      .aggregators(
-                                          Collections.singletonList(
-                                              new HllSketchBuildAggregatorFactory(
-                                                  "a0:a",
-                                                  "cnt",
-                                                  null,
-                                                  null,
-                                                  null,
-                                                  null,
-                                                  ROUND
-                                              )
-                                          )
-                                      )
-                                      .postAggregators(
-                                          ImmutableList.of(
-                                              new FinalizingFieldAccessPostAggregator("a0", "a0:a")
-                                          )
-                                      )
-                                      .context(QUERY_CONTEXT_DEFAULT)
-                                      .build()
-                                      .withOverriddenContext(
-                                          BaseCalciteQueryTest.getTimeseriesContextWithFloorTime(
-                                              ImmutableMap.of(
-                                                  TimeseriesQuery.SKIP_EMPTY_BUCKETS,
-                                                  true,
-                                                  BaseQuery.SQL_QUERY_ID,
-                                                  "dummy"
-                                              ),
-                                              "d0"
-                                          )
-                                      )
+                                    .dataSource(CalciteTests.DATASOURCE1)
+                                    .intervals(new MultipleIntervalSegmentSpec(ImmutableList.of(
+                                        Filtration.eternity()
+                                    )))
+                                    .granularity(new PeriodGranularity(Period.days(1), null, DateTimeZone.UTC))
+                                    .aggregators(
+                                        Collections.singletonList(
+                                            new HllSketchBuildAggregatorFactory(
+                                                "a0:a",
+                                                "cnt",
+                                                null,
+                                                null,
+                                                null,
+                                                null,
+                                                ROUND
+                                            )
+                                        )
+                                    )
+                                    .postAggregators(
+                                        ImmutableList.of(
+                                            new FinalizingFieldAccessPostAggregator("a0", "a0:a")
+                                        )
+                                    )
+                                    .context(QUERY_CONTEXT_DEFAULT)
+                                    .withOverriddenContext(
+                                        BaseCalciteQueryTest.getTimeseriesContextWithFloorTime(
+                                            ImmutableMap.of(
+                                                TimeseriesQuery.SKIP_EMPTY_BUCKETS,
+                                                true,
+                                                BaseQuery.SQL_QUERY_ID,
+                                                "dummy"
+                                            ),
+                                            "d0"
+                                        )
+                                    )
+                                    .build()
                             )
                         )
                         .setInterval(new MultipleIntervalSegmentSpec(ImmutableList.of(Filtration.eternity())))

@@ -19,33 +19,66 @@
 
 package org.apache.druid.storage.s3;
 
-import com.amazonaws.services.s3.model.ListObjectsV2Request;
-import com.amazonaws.services.s3.model.ListObjectsV2Result;
-import com.amazonaws.services.s3.model.S3ObjectSummary;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterables;
 import org.junit.Assert;
 import org.junit.Test;
+import software.amazon.awssdk.services.s3.model.ListObjectsV2Request;
+import software.amazon.awssdk.services.s3.model.ListObjectsV2Response;
+import software.amazon.awssdk.services.s3.model.S3Object;
 
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
 
+/**
+ * Test data holder for bucket + key + size
+ */
+
 public class ObjectSummaryIteratorTest
 {
-  private static final ImmutableList<S3ObjectSummary> TEST_OBJECTS =
+  static class TestS3Object
+  {
+    private final String bucket;
+    private final String key;
+    private final long size;
+
+    public TestS3Object(String bucket, String key, long size)
+    {
+      this.bucket = bucket;
+      this.key = key;
+      this.size = size;
+    }
+
+    public String bucket()
+    {
+      return bucket;
+    }
+
+    public String key()
+    {
+      return key;
+    }
+
+    public long size()
+    {
+      return size;
+    }
+  }
+
+  private static final ImmutableList<TestS3Object> TEST_OBJECTS =
       ImmutableList.of(
-          makeObjectSummary("b", "foo", 10L),
-          makeObjectSummary("b", "foo/", 0L), // directory
-          makeObjectSummary("b", "foo/bar1", 10L),
-          makeObjectSummary("b", "foo/bar2", 10L),
-          makeObjectSummary("b", "foo/bar3", 10L),
-          makeObjectSummary("b", "foo/bar4", 10L),
-          makeObjectSummary("b", "foo/bar5", 0L), // empty object
-          makeObjectSummary("b", "foo/baz", 10L),
-          makeObjectSummary("bucketnotmine", "a/different/bucket", 10L),
-          makeObjectSummary("b", "foo/bar/", 0L) // another directory at the end of list
+          new TestS3Object("b", "foo", 10L),
+          new TestS3Object("b", "foo/", 0L), // directory
+          new TestS3Object("b", "foo/bar1", 10L),
+          new TestS3Object("b", "foo/bar2", 10L),
+          new TestS3Object("b", "foo/bar3", 10L),
+          new TestS3Object("b", "foo/bar4", 10L),
+          new TestS3Object("b", "foo/bar5", 0L), // empty object
+          new TestS3Object("b", "foo/baz", 10L),
+          new TestS3Object("bucketnotmine", "a/different/bucket", 10L),
+          new TestS3Object("b", "foo/bar/", 0L) // another directory at the end of the list
       );
 
   @Test
@@ -163,6 +196,10 @@ public class ObjectSummaryIteratorTest
     // O(N^2) but who cares -- the list is short.
     for (final String uri : expectedUris) {
       final List<S3ObjectSummary> matches = TEST_OBJECTS.stream()
+                                                        .map(obj -> new S3ObjectSummary(
+                                                            obj.bucket(),
+                                                            S3Object.builder().key(obj.key()).size(obj.size()).build()
+                                                        ))
                                                         .filter(
                                                             summary ->
                                                                 S3Utils.summaryToUri(summary).toString().equals(uri)
@@ -192,60 +229,52 @@ public class ObjectSummaryIteratorTest
    * {@link ObjectSummaryIterator} class.
    */
   private static ServerSideEncryptingAmazonS3 makeMockClient(
-      final List<S3ObjectSummary> objects
+      final List<TestS3Object> objects
   )
   {
     return new ServerSideEncryptingAmazonS3(null, null, new S3TransferConfig())
     {
       @Override
-      public ListObjectsV2Result listObjectsV2(final ListObjectsV2Request request)
+      public ListObjectsV2Response listObjectsV2(final ListObjectsV2Request request)
       {
         // Continuation token is an index in the "objects" list.
-        final String continuationToken = request.getContinuationToken();
+        final String continuationToken = request.continuationToken();
         final int startIndex = continuationToken == null ? 0 : Integer.parseInt(continuationToken);
 
         // Find matching objects.
-        final List<S3ObjectSummary> summaries = new ArrayList<>();
+        final List<S3Object> summaries = new ArrayList<>();
         int nextIndex = -1;
 
         for (int i = startIndex; i < objects.size(); i++) {
-          final S3ObjectSummary summary = objects.get(i);
+          final TestS3Object testObj = objects.get(i);
 
-          if (summary.getBucketName().equals(request.getBucketName())
-              && summary.getKey().startsWith(request.getPrefix())) {
+          if (testObj.bucket().equals(request.bucket())
+              && testObj.key().startsWith(request.prefix())) {
 
-            if (summaries.size() == request.getMaxKeys()) {
+            if (summaries.size() == request.maxKeys()) {
               // We reached our max key limit; set nextIndex (which will lead to a result with truncated = true).
               nextIndex = i;
               break;
             }
 
             // Generate a summary.
-            summaries.add(summary);
+            summaries.add(S3Object.builder().key(testObj.key()).size(testObj.size()).build());
           }
         }
 
         // Generate the result.
-        final ListObjectsV2Result retVal = new ListObjectsV2Result();
-        retVal.setContinuationToken(continuationToken);
-        retVal.getObjectSummaries().addAll(summaries);
+        ListObjectsV2Response.Builder builder = ListObjectsV2Response.builder()
+            .continuationToken(continuationToken)
+            .contents(summaries)
+            .name(request.bucket());
 
         if (nextIndex >= 0) {
-          retVal.setTruncated(true);
-          retVal.setNextContinuationToken(String.valueOf(nextIndex));
+          builder.isTruncated(true)
+                 .nextContinuationToken(String.valueOf(nextIndex));
         }
 
-        return retVal;
+        return builder.build();
       }
     };
-  }
-
-  private static S3ObjectSummary makeObjectSummary(final String bucket, final String key, final long size)
-  {
-    final S3ObjectSummary summary = new S3ObjectSummary();
-    summary.setBucketName(bucket);
-    summary.setKey(key);
-    summary.setSize(size);
-    return summary;
   }
 }

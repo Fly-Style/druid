@@ -19,8 +19,6 @@
 
 package org.apache.druid.storage.s3.output;
 
-import com.amazonaws.services.s3.model.UploadPartRequest;
-import com.amazonaws.services.s3.model.UploadPartResult;
 import org.apache.druid.java.util.common.HumanReadableBytes;
 import org.apache.druid.java.util.metrics.StubServiceEmitter;
 import org.apache.druid.query.DruidProcessingConfigTest;
@@ -32,6 +30,8 @@ import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
+import software.amazon.awssdk.services.s3.model.UploadPartRequest;
+import software.amazon.awssdk.services.s3.model.UploadPartResponse;
 
 import java.io.File;
 import java.util.concurrent.Future;
@@ -66,18 +66,19 @@ public class S3UploadManagerTest
     EasyMock.expect(chunkFile.delete()).andReturn(true).anyTimes();
 
     int chunkId = 42;
-    UploadPartResult uploadPartResult = new UploadPartResult();
-    uploadPartResult.setPartNumber(chunkId);
-    uploadPartResult.setETag("etag");
+    UploadPartResponse uploadPartResult = UploadPartResponse.builder()
+        .build();
+    uploadPartResult = uploadPartResult.toBuilder().partNumber(chunkId).build();
+    uploadPartResult = uploadPartResult.toBuilder().eTag("etag").build();
     EasyMock.expect(s3Client.uploadPart(EasyMock.anyObject(UploadPartRequest.class))).andReturn(uploadPartResult);
 
     EasyMock.replay(chunkFile, s3Client);
 
-    Future<UploadPartResult> result = s3UploadManager.queueChunkForUpload(s3Client, "test-key", chunkId, chunkFile, "upload-id", s3OutputConfig);
+    Future<UploadPartResponse> result = s3UploadManager.queueChunkForUpload(s3Client, "test-key", chunkId, chunkFile, "upload-id", s3OutputConfig);
 
-    UploadPartResult futureResult = result.get();
-    Assert.assertEquals(chunkId, futureResult.getPartNumber());
-    Assert.assertEquals("etag", futureResult.getETag());
+    UploadPartResponse futureResult = result.get();
+    Assert.assertEquals(chunkId, futureResult.partNumber());
+    Assert.assertEquals("etag", futureResult.eTag());
 
     serviceEmitter.verifyEmitted("s3/upload/part/queuedTime", 1);
     serviceEmitter.verifyEmitted("s3/upload/part/queueSize", 1);
@@ -126,20 +127,21 @@ public class S3UploadManagerTest
     File chunkFile = EasyMock.mock(File.class);
     EasyMock.expect(chunkFile.length()).andReturn(1024L).anyTimes();
 
-    UploadPartResult uploadPartResult = new UploadPartResult();
+    UploadPartResponse uploadPartResult = UploadPartResponse.builder()
+        .build();
     Capture<UploadPartRequest> partRequestCapture = EasyMock.newCapture();
     EasyMock.expect(s3Client.uploadPart(EasyMock.capture(partRequestCapture))).andReturn(uploadPartResult);
     EasyMock.replay(s3Client, chunkFile);
 
-    UploadPartResult result = s3UploadManager.uploadPartIfPossible(s3Client, "upload-id", "bucket", "key", 1, chunkFile);
+    UploadPartResponse result = s3UploadManager.uploadPartIfPossible(s3Client, "upload-id", "bucket", "key", 1, chunkFile);
 
     UploadPartRequest capturedRequest = partRequestCapture.getValue();
-    assertEquals("upload-id", capturedRequest.getUploadId());
-    assertEquals("bucket", capturedRequest.getBucketName());
-    assertEquals("key", capturedRequest.getKey());
-    assertEquals(1, capturedRequest.getPartNumber());
-    assertEquals(chunkFile, capturedRequest.getFile());
-    assertEquals(1024L, capturedRequest.getPartSize());
+    assertEquals("upload-id", capturedRequest.uploadId());
+    assertEquals("bucket", capturedRequest.bucket());
+    assertEquals("key", capturedRequest.key());
+    assertEquals(1, capturedRequest.partNumber());
+    assertEquals(chunkFile, capturedRequest.file());
+    assertEquals(1024L, capturedRequest.partSize());
 
     assertEquals(uploadPartResult, result);
   }

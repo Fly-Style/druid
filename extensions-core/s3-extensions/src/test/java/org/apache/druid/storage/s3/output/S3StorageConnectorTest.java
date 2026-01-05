@@ -19,15 +19,6 @@
 
 package org.apache.druid.storage.s3.output;
 
-import com.amazonaws.ClientConfigurationFactory;
-import com.amazonaws.auth.AWSCredentials;
-import com.amazonaws.auth.BasicAWSCredentials;
-import com.amazonaws.client.builder.AwsClientBuilder;
-import com.amazonaws.internal.StaticCredentialsProvider;
-import com.amazonaws.services.s3.AmazonS3Client;
-import com.amazonaws.services.s3.AmazonS3ClientBuilder;
-import com.amazonaws.services.s3.model.AmazonS3Exception;
-import com.amazonaws.services.s3.model.CreateBucketRequest;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
 import org.apache.druid.java.util.common.HumanReadableBytes;
@@ -36,6 +27,7 @@ import org.apache.druid.java.util.metrics.StubServiceEmitter;
 import org.apache.druid.query.DruidProcessingConfigTest;
 import org.apache.druid.storage.StorageConnector;
 import org.apache.druid.storage.s3.ServerSideEncryptingAmazonS3;
+import org.apache.http.HttpStatus;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
@@ -45,11 +37,23 @@ import org.testcontainers.containers.MinIOContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
+import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
+import software.amazon.awssdk.auth.credentials.AwsCredentials;
+import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
+import software.amazon.awssdk.core.client.config.ClientOverrideConfiguration;
+import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.S3ClientBuilder;
+import software.amazon.awssdk.services.s3.S3Configuration;
+import software.amazon.awssdk.services.s3.model.CreateBucketRequest;
+import software.amazon.awssdk.services.s3.model.HeadBucketRequest;
+import software.amazon.awssdk.services.s3.model.HeadBucketResponse;
+import software.amazon.awssdk.services.s3.model.S3Exception;
 
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -79,8 +83,17 @@ public class S3StorageConnectorTest
   public void setup() throws IOException
   {
     s3Client = MinioUtil.createS3Client(MINIO);
-    if (!s3Client.getAmazonS3().doesBucketExistV2(BUCKET)) {
-      s3Client.getAmazonS3().createBucket(new CreateBucketRequest(BUCKET));
+
+    HeadBucketRequest isBucketExistsRequest = HeadBucketRequest.builder().bucket(BUCKET).build();
+    HeadBucketResponse response = s3Client.getAmazonS3().headBucket(isBucketExistsRequest);
+    int responseStatusCode = response.sdkHttpResponse().statusCode();
+
+    if (responseStatusCode == HttpStatus.SC_NOT_FOUND) {
+      s3Client.getAmazonS3().createBucket(
+          CreateBucketRequest.builder().bucket(BUCKET).build()
+      );
+    } else if (responseStatusCode != HttpStatus.SC_OK) {
+      throw new IOException("Unexpected status code: " + responseStatusCode);
     }
 
     S3OutputConfig s3OutputConfig = new S3OutputConfig(
@@ -145,9 +158,9 @@ public class S3StorageConnectorTest
         IOException.class,
         () -> unauthorizedStorageConnector.pathExists(TEST_FILE)
     );
-    Assertions.assertEquals(AmazonS3Exception.class, e2.getCause().getClass());
-    AmazonS3Exception amazonS3Exception = (AmazonS3Exception) e2.getCause();
-    Assertions.assertEquals(403, amazonS3Exception.getStatusCode());
+    Assertions.assertEquals(S3Exception.class, e2.getCause().getClass());
+    S3Exception amazonS3Exception = (S3Exception) e2.getCause();
+    Assertions.assertEquals(403, amazonS3Exception.awsErrorDetails().sdkHttpResponse().statusCode());
   }
 
   @Test
@@ -171,7 +184,7 @@ public class S3StorageConnectorTest
       outputStream.write(data.getBytes(StandardCharsets.UTF_8));
     }
 
-    // non empty reads
+    // non-empty reads
     for (int start = 0; start < data.length(); start++) {
       for (int length = 1; length <= data.length() - start; length++) {
         String dataQueried = data.substring(start, start + length);
@@ -242,7 +255,10 @@ public class S3StorageConnectorTest
     try (OutputStream outputStream = storageConnector.write(StringUtils.format("%s/deleteFirst", deleteFolderName))) {
       outputStream.write("first".getBytes(StandardCharsets.UTF_8));
     }
-    try (OutputStream outputStream = storageConnector.write(StringUtils.format("%s/inner/deleteSecond", deleteFolderName))) {
+    try (OutputStream outputStream = storageConnector.write(StringUtils.format(
+        "%s/inner/deleteSecond",
+        deleteFolderName
+    ))) {
       outputStream.write("second".getBytes(StandardCharsets.UTF_8));
     }
 
@@ -282,7 +298,7 @@ public class S3StorageConnectorTest
       return createContainer(null);
     }
 
-    public static MinIOContainer createContainer(AWSCredentials credentials)
+    public static MinIOContainer createContainer(AwsCredentials credentials)
     {
       MinIOContainer container = new MinIOContainer(DockerImageName.parse("minio/minio:latest"));
 
@@ -291,8 +307,8 @@ public class S3StorageConnectorTest
       container.withEnv("MINIO_DOMAIN", "localhost");
 
       if (credentials != null) {
-        container.withUserName(credentials.getAWSAccessKeyId());
-        container.withPassword(credentials.getAWSSecretKey());
+        container.withUserName(credentials.accessKeyId());
+        container.withPassword(credentials.secretAccessKey());
       }
 
       return container;
@@ -300,18 +316,15 @@ public class S3StorageConnectorTest
 
     public static ServerSideEncryptingAmazonS3 createS3Client(MinIOContainer container)
     {
-      final AmazonS3ClientBuilder amazonS3ClientBuilder = AmazonS3Client
+      final S3ClientBuilder amazonS3ClientBuilder = S3Client
           .builder()
-          .withEndpointConfiguration(
-              new AwsClientBuilder.EndpointConfiguration(
-                  container.getS3URL(),
-                  "us-east-1"
-              )
-          )
-          .withCredentials(new StaticCredentialsProvider(
-              new BasicAWSCredentials(container.getUserName(), container.getPassword())))
-          .withClientConfiguration(new ClientConfigurationFactory().getConfig())
-          .withPathStyleAccessEnabled(true); // OSX won't resolve subdomains
+          .endpointOverride(URI.create(container.getS3URL()))
+          .credentialsProvider(StaticCredentialsProvider.create(
+              AwsBasicCredentials.create(container.getUserName(), container.getPassword())))
+          .overrideConfiguration(ClientOverrideConfiguration.builder().build())
+          .serviceConfiguration(S3Configuration.builder()
+                                               .pathStyleAccessEnabled(true)
+                                               .build()); // OSX won't resolve subdomains
 
       return ServerSideEncryptingAmazonS3.builder()
                                          .setAmazonS3ClientBuilder(amazonS3ClientBuilder)
@@ -320,18 +333,15 @@ public class S3StorageConnectorTest
 
     public static ServerSideEncryptingAmazonS3 createUnauthorizedS3Client(MinIOContainer container)
     {
-      final AmazonS3ClientBuilder amazonS3ClientBuilder = AmazonS3Client
+      final S3ClientBuilder amazonS3ClientBuilder = S3Client
           .builder()
-          .withEndpointConfiguration(
-              new AwsClientBuilder.EndpointConfiguration(
-                  container.getS3URL(),
-                  "us-east-1"
-              )
-          )
-          .withCredentials(new StaticCredentialsProvider(
-              new BasicAWSCredentials(container.getUserName(), "wrong")))
-          .withClientConfiguration(new ClientConfigurationFactory().getConfig())
-          .withPathStyleAccessEnabled(true); // OSX won't resolve subdomains
+          .endpointOverride(URI.create(container.getS3URL()))
+          .credentialsProvider(StaticCredentialsProvider.create(
+              AwsBasicCredentials.create(container.getUserName(), "wrong")))
+          .overrideConfiguration(ClientOverrideConfiguration.builder().build())
+          .serviceConfiguration(S3Configuration.builder()
+                                               .pathStyleAccessEnabled(true)
+                                               .build()); // OSX won't resolve subdomains
 
       return ServerSideEncryptingAmazonS3.builder()
                                          .setAmazonS3ClientBuilder(amazonS3ClientBuilder)

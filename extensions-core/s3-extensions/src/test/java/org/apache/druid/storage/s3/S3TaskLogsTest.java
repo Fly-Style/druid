@@ -19,18 +19,6 @@
 
 package org.apache.druid.storage.s3;
 
-import com.amazonaws.SdkClientException;
-import com.amazonaws.services.s3.model.AccessControlList;
-import com.amazonaws.services.s3.model.AmazonS3Exception;
-import com.amazonaws.services.s3.model.DeleteObjectsRequest;
-import com.amazonaws.services.s3.model.GetObjectRequest;
-import com.amazonaws.services.s3.model.Grant;
-import com.amazonaws.services.s3.model.ObjectMetadata;
-import com.amazonaws.services.s3.model.Owner;
-import com.amazonaws.services.s3.model.Permission;
-import com.amazonaws.services.s3.model.PutObjectRequest;
-import com.amazonaws.services.s3.model.S3Object;
-import com.amazonaws.services.s3.model.S3ObjectSummary;
 import com.google.common.base.Optional;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
@@ -48,6 +36,19 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 import org.junit.runner.RunWith;
+import software.amazon.awssdk.core.ResponseInputStream;
+import software.amazon.awssdk.core.exception.SdkClientException;
+import software.amazon.awssdk.services.s3.model.AccessControlPolicy;
+import software.amazon.awssdk.services.s3.model.DeleteObjectsRequest;
+import software.amazon.awssdk.services.s3.model.GetObjectRequest;
+import software.amazon.awssdk.services.s3.model.GetObjectResponse;
+import software.amazon.awssdk.services.s3.model.Grant;
+import software.amazon.awssdk.services.s3.model.HeadObjectResponse;
+import software.amazon.awssdk.services.s3.model.Owner;
+import software.amazon.awssdk.services.s3.model.Permission;
+import software.amazon.awssdk.services.s3.model.PutObjectRequest;
+import software.amazon.awssdk.services.s3.model.S3Exception;
+import software.amazon.awssdk.services.s3.model.S3Object;
 
 import javax.annotation.Nonnull;
 import java.io.BufferedReader;
@@ -116,9 +117,9 @@ public class S3TaskLogsTest extends EasyMockSupport
     Assert.assertEquals(
         "The Grantee identifier should be test_owner",
         "test_owner",
-        grant.getGrantee().getIdentifier()
+        grant.grantee().identifier()
     );
-    Assert.assertEquals("The Grant should have full control permission", Permission.FullControl, grant.getPermission());
+    Assert.assertEquals("The Grant should have full control permission", Permission.FULL_CONTROL, grant.permission());
   }
   
   @Test
@@ -167,9 +168,9 @@ public class S3TaskLogsTest extends EasyMockSupport
     s3TaskLogs.pushTaskPayload(taskId, payloadFile);
 
     PutObjectRequest putObjectRequest = putObjectRequestCapture.getValue();
-    Assert.assertEquals(TEST_BUCKET, putObjectRequest.getBucketName());
-    Assert.assertEquals("prefix/" + taskId + "/task.json", putObjectRequest.getKey());
-    Assert.assertEquals(payloadFile, putObjectRequest.getFile());
+    Assert.assertEquals(TEST_BUCKET, putObjectRequest.bucket());
+    Assert.assertEquals("prefix/" + taskId + "/task.json", putObjectRequest.key());
+    Assert.assertEquals(payloadFile, putObjectRequest.file());
     EasyMock.verify(s3Client);
   }
 
@@ -178,15 +179,16 @@ public class S3TaskLogsTest extends EasyMockSupport
   {
     String taskPayloadString = "task payload";
 
-    ObjectMetadata objectMetadata = new ObjectMetadata();
-    objectMetadata.setContentLength(taskPayloadString.length());
+    HeadObjectResponse objectMetadata = HeadObjectResponse.builder()
+        .build();
     EasyMock.expect(s3Client.getObjectMetadata(EasyMock.anyObject(), EasyMock.anyObject()))
         .andReturn(objectMetadata)
         .once();
 
     InputStream taskPayload = new ByteArrayInputStream(taskPayloadString.getBytes(Charset.defaultCharset()));
-    S3Object s3Object = new S3Object();
-    s3Object.setObjectContent(taskPayload);
+    ResponseInputStream<GetObjectResponse> s3Object = S3Object.builder()
+        .build();
+    s3Object.response() = s3Object.response().toBuilder().objectContent(taskPayload).build();
     Capture<GetObjectRequest> getObjectRequestCapture = Capture.newInstance(CaptureType.FIRST);
     EasyMock.expect(s3Client.getObject(EasyMock.capture(getObjectRequestCapture)))
         .andReturn(s3Object)
@@ -207,8 +209,8 @@ public class S3TaskLogsTest extends EasyMockSupport
     Optional<InputStream> payloadResponse = s3TaskLogs.streamTaskPayload(taskId);
 
     GetObjectRequest getObjectRequest = getObjectRequestCapture.getValue();
-    Assert.assertEquals(TEST_BUCKET, getObjectRequest.getBucketName());
-    Assert.assertEquals("prefix/" + taskId + "/task.json", getObjectRequest.getKey());
+    Assert.assertEquals(TEST_BUCKET, getObjectRequest.bucket());
+    Assert.assertEquals("prefix/" + taskId + "/task.json", getObjectRequest.key());
     Assert.assertTrue(payloadResponse.isPresent());
 
     Assert.assertEquals(taskPayloadString, IOUtils.toString(payloadResponse.get(), Charset.defaultCharset()));
@@ -218,8 +220,8 @@ public class S3TaskLogsTest extends EasyMockSupport
   @Test
   public void test_killAll_noException_deletesAllTaskLogs() throws IOException
   {
-    S3ObjectSummary objectSummary1 = S3TestUtils.newS3ObjectSummary(TEST_BUCKET, KEY_1, TIME_0);
-    S3ObjectSummary objectSummary2 = S3TestUtils.newS3ObjectSummary(TEST_BUCKET, KEY_2, TIME_1);
+    S3Object objectSummary1 = S3TestUtils.newS3ObjectSummary(TEST_BUCKET, KEY_1, TIME_0);
+    S3Object objectSummary2 = S3TestUtils.newS3ObjectSummary(TEST_BUCKET, KEY_2, TIME_1);
 
     EasyMock.expect(timeSupplier.getAsLong()).andReturn(TIME_NOW);
 
@@ -229,16 +231,18 @@ public class S3TaskLogsTest extends EasyMockSupport
         ImmutableList.of(objectSummary1, objectSummary2)
     );
 
-    DeleteObjectsRequest deleteRequest1 = new DeleteObjectsRequest(TEST_BUCKET)
-        .withBucketName(TEST_BUCKET)
-        .withKeys(ImmutableList.of(
+    DeleteObjectsRequest deleteRequest1 = DeleteObjectsRequest.builder().bucket(TEST_BUCKET)
+        .bucket(TEST_BUCKET)
+        .keys(ImmutableList.of(
             new DeleteObjectsRequest.KeyVersion(KEY_1)
-        ));
-    DeleteObjectsRequest deleteRequest2 = new DeleteObjectsRequest(TEST_BUCKET)
-        .withBucketName(TEST_BUCKET)
-        .withKeys(ImmutableList.of(
-            new DeleteObjectsRequest.KeyVersion(KEY_2)
-        ));
+        ))
+        .build();
+    DeleteObjectsRequest deleteRequest2 = DeleteObjectsRequest.builder().bucket(TEST_BUCKET)
+        .bucket(TEST_BUCKET)
+        .keys(ImmutableList.of(
+            new software.amazon.awssdk.services.s3.model.DeleteObjectsRequestKeyVersion(KEY_2)
+        ))
+        .build();
 
     S3TestUtils.mockS3ClientDeleteObjects(
         s3Client,
@@ -257,7 +261,7 @@ public class S3TaskLogsTest extends EasyMockSupport
   @Test
   public void test_killAll_recoverableExceptionWhenDeletingObjects_deletesAllTaskLogs() throws IOException
   {
-    S3ObjectSummary objectSummary1 = S3TestUtils.newS3ObjectSummary(TEST_BUCKET, KEY_1, TIME_0);
+    S3Object objectSummary1 = S3TestUtils.newS3ObjectSummary(TEST_BUCKET, KEY_1, TIME_0);
 
     EasyMock.expect(timeSupplier.getAsLong()).andReturn(TIME_NOW);
 
@@ -267,11 +271,12 @@ public class S3TaskLogsTest extends EasyMockSupport
         ImmutableList.of(objectSummary1)
     );
 
-    DeleteObjectsRequest deleteRequest1 = new DeleteObjectsRequest(TEST_BUCKET)
-        .withBucketName(TEST_BUCKET)
-        .withKeys(ImmutableList.of(
-            new DeleteObjectsRequest.KeyVersion(KEY_1)
-        ));
+    DeleteObjectsRequest deleteRequest1 = DeleteObjectsRequest.builder().bucket(TEST_BUCKET)
+        .bucket(TEST_BUCKET)
+        .keys(ImmutableList.of(
+            new software.amazon.awssdk.services.s3.model.DeleteObjectsRequestKeyVersion(KEY_1)
+        ))
+        .build();
 
     S3TestUtils.mockS3ClientDeleteObjects(
         s3Client,
@@ -292,7 +297,7 @@ public class S3TaskLogsTest extends EasyMockSupport
   {
     boolean ioExceptionThrown = false;
     try {
-      S3ObjectSummary objectSummary1 = S3TestUtils.newS3ObjectSummary(TEST_BUCKET, KEY_1, TIME_0);
+      S3Object objectSummary1 = S3TestUtils.newS3ObjectSummary(TEST_BUCKET, KEY_1, TIME_0);
       EasyMock.expect(timeSupplier.getAsLong()).andReturn(TIME_NOW);
       S3TestUtils.expectListObjects(
           s3Client,
@@ -300,11 +305,12 @@ public class S3TaskLogsTest extends EasyMockSupport
           ImmutableList.of(objectSummary1)
       );
 
-      DeleteObjectsRequest deleteRequest1 = new DeleteObjectsRequest(TEST_BUCKET)
-          .withBucketName(TEST_BUCKET)
-          .withKeys(ImmutableList.of(
-              new DeleteObjectsRequest.KeyVersion(KEY_1)
-          ));
+      DeleteObjectsRequest deleteRequest1 = DeleteObjectsRequest.builder().bucket(TEST_BUCKET)
+          .bucket(TEST_BUCKET)
+          .keys(ImmutableList.of(
+              new software.amazon.awssdk.services.s3.model.DeleteObjectsRequestKeyVersion(KEY_1)
+          ))
+          .build();
       S3TestUtils.mockS3ClientDeleteObjects(
           s3Client,
           ImmutableList.of(),
@@ -328,8 +334,8 @@ public class S3TaskLogsTest extends EasyMockSupport
   @Test
   public void test_killOlderThan_noException_deletesOnlyTaskLogsOlderThan() throws IOException
   {
-    S3ObjectSummary objectSummary1 = S3TestUtils.newS3ObjectSummary(TEST_BUCKET, KEY_1, TIME_0);
-    S3ObjectSummary objectSummary2 = S3TestUtils.newS3ObjectSummary(TEST_BUCKET, KEY_2, TIME_FUTURE);
+    S3Object objectSummary1 = S3TestUtils.newS3ObjectSummary(TEST_BUCKET, KEY_1, TIME_0);
+    S3Object objectSummary2 = S3TestUtils.newS3ObjectSummary(TEST_BUCKET, KEY_2, TIME_FUTURE);
 
     S3TestUtils.expectListObjects(
         s3Client,
@@ -337,11 +343,12 @@ public class S3TaskLogsTest extends EasyMockSupport
         ImmutableList.of(objectSummary1, objectSummary2)
     );
 
-    DeleteObjectsRequest deleteRequest1 = new DeleteObjectsRequest(TEST_BUCKET)
-        .withBucketName(TEST_BUCKET)
-        .withKeys(ImmutableList.of(
-            new DeleteObjectsRequest.KeyVersion(KEY_1)
-        ));
+    DeleteObjectsRequest deleteRequest1 = DeleteObjectsRequest.builder().bucket(TEST_BUCKET)
+        .bucket(TEST_BUCKET)
+        .keys(ImmutableList.of(
+            new software.amazon.awssdk.services.s3.model.DeleteObjectsRequestKeyVersion(KEY_1)
+        ))
+        .build();
 
     S3TestUtils.mockS3ClientDeleteObjects(s3Client, ImmutableList.of(deleteRequest1), ImmutableMap.of());
 
@@ -356,7 +363,7 @@ public class S3TaskLogsTest extends EasyMockSupport
   @Test
   public void test_killOlderThan_recoverableExceptionWhenListingObjects_deletesAllTaskLogs() throws IOException
   {
-    S3ObjectSummary objectSummary1 = S3TestUtils.newS3ObjectSummary(TEST_BUCKET, KEY_1, TIME_0);
+    S3Object objectSummary1 = S3TestUtils.newS3ObjectSummary(TEST_BUCKET, KEY_1, TIME_0);
 
     S3TestUtils.expectListObjects(
         s3Client,
@@ -364,11 +371,12 @@ public class S3TaskLogsTest extends EasyMockSupport
         ImmutableList.of(objectSummary1)
     );
 
-    DeleteObjectsRequest deleteRequest1 = new DeleteObjectsRequest(TEST_BUCKET)
-        .withBucketName(TEST_BUCKET)
-        .withKeys(ImmutableList.of(
-            new DeleteObjectsRequest.KeyVersion(KEY_1)
-        ));
+    DeleteObjectsRequest deleteRequest1 = DeleteObjectsRequest.builder().bucket(TEST_BUCKET)
+        .bucket(TEST_BUCKET)
+        .keys(ImmutableList.of(
+            new software.amazon.awssdk.services.s3.model.DeleteObjectsRequestKeyVersion(KEY_1)
+        ))
+        .build();
 
     S3TestUtils.mockS3ClientDeleteObjects(
         s3Client,
@@ -389,18 +397,19 @@ public class S3TaskLogsTest extends EasyMockSupport
   {
     boolean ioExceptionThrown = false;
     try {
-      S3ObjectSummary objectSummary1 = S3TestUtils.newS3ObjectSummary(TEST_BUCKET, KEY_1, TIME_0);
+      S3Object objectSummary1 = S3TestUtils.newS3ObjectSummary(TEST_BUCKET, KEY_1, TIME_0);
       S3TestUtils.expectListObjects(
           s3Client,
           PREFIX_URI,
           ImmutableList.of(objectSummary1)
       );
 
-      DeleteObjectsRequest deleteRequest1 = new DeleteObjectsRequest(TEST_BUCKET)
-          .withBucketName(TEST_BUCKET)
-          .withKeys(ImmutableList.of(
-              new DeleteObjectsRequest.KeyVersion(KEY_1)
-          ));
+      DeleteObjectsRequest deleteRequest1 = DeleteObjectsRequest.builder().bucket(TEST_BUCKET)
+          .bucket(TEST_BUCKET)
+          .keys(ImmutableList.of(
+              new software.amazon.awssdk.services.s3.model.DeleteObjectsRequestKeyVersion(KEY_1)
+          ))
+          .build();
       S3TestUtils.mockS3ClientDeleteObjects(
           s3Client,
           ImmutableList.of(),
@@ -426,15 +435,17 @@ public class S3TaskLogsTest extends EasyMockSupport
   {
     EasyMock.reset(s3Client);
     String logPath = TEST_PREFIX + "/" + KEY_1 + "/log";
-    ObjectMetadata objectMetadata = new ObjectMetadata();
-    objectMetadata.setContentLength(LOG_CONTENTS.length());
+    HeadObjectResponse objectMetadata = HeadObjectResponse.builder()
+        .build();
     EasyMock.expect(s3Client.getObjectMetadata(TEST_BUCKET, logPath)).andReturn(objectMetadata);
 
-    S3Object s3Object = new S3Object();
-    s3Object.setObjectContent(new ByteArrayInputStream(LOG_CONTENTS.getBytes(StandardCharsets.UTF_8)));
-    GetObjectRequest getObjectRequest = new GetObjectRequest(TEST_BUCKET, logPath);
+    ResponseInputStream<GetObjectResponse> s3Object = S3Object.builder()
+        .build();
+    s3Object.response() = s3Object.response().toBuilder().objectContent(new ByteArrayInputStream(LOG_CONTENTS.getBytes(StandardCharsets.UTF_8))).build();
+    GetObjectRequest getObjectRequest = GetObjectRequest.builder().bucket(TEST_BUCKET).key(logPath)
+        .build();
     getObjectRequest.setRange(0, LOG_CONTENTS.length() - 1);
-    getObjectRequest.withMatchingETagConstraint(objectMetadata.getETag());
+    getObjectRequest.matchingETagConstraint(objectMetadata.eTag());
     EasyMock.expect(s3Client.getObject(getObjectRequest)).andReturn(s3Object);
     EasyMock.replay(s3Client);
 
@@ -454,15 +465,17 @@ public class S3TaskLogsTest extends EasyMockSupport
   {
     EasyMock.reset(s3Client);
     String logPath = TEST_PREFIX + "/" + KEY_1 + "/log";
-    ObjectMetadata objectMetadata = new ObjectMetadata();
-    objectMetadata.setContentLength(LOG_CONTENTS.length());
+    HeadObjectResponse objectMetadata = HeadObjectResponse.builder()
+        .build();
     EasyMock.expect(s3Client.getObjectMetadata(TEST_BUCKET, logPath)).andReturn(objectMetadata);
 
-    S3Object s3Object = new S3Object();
-    s3Object.setObjectContent(new ByteArrayInputStream(LOG_CONTENTS.substring(1).getBytes(StandardCharsets.UTF_8)));
-    GetObjectRequest getObjectRequest = new GetObjectRequest(TEST_BUCKET, logPath);
+    ResponseInputStream<GetObjectResponse> s3Object = S3Object.builder()
+        .build();
+    s3Object.response() = s3Object.response().toBuilder().objectContent(new ByteArrayInputStream(LOG_CONTENTS.substring(1).getBytes(StandardCharsets.UTF_8))).build();
+    GetObjectRequest getObjectRequest = GetObjectRequest.builder().bucket(TEST_BUCKET).key(logPath)
+        .build();
     getObjectRequest.setRange(1, LOG_CONTENTS.length() - 1);
-    getObjectRequest.withMatchingETagConstraint(objectMetadata.getETag());
+    getObjectRequest.matchingETagConstraint(objectMetadata.eTag());
     EasyMock.expect(s3Client.getObject(getObjectRequest)).andReturn(s3Object);
     EasyMock.replay(s3Client);
 
@@ -482,15 +495,17 @@ public class S3TaskLogsTest extends EasyMockSupport
   {
     EasyMock.reset(s3Client);
     String logPath = TEST_PREFIX + "/" + KEY_1 + "/log";
-    ObjectMetadata objectMetadata = new ObjectMetadata();
-    objectMetadata.setContentLength(LOG_CONTENTS.length());
+    HeadObjectResponse objectMetadata = HeadObjectResponse.builder()
+        .build();
     EasyMock.expect(s3Client.getObjectMetadata(TEST_BUCKET, logPath)).andReturn(objectMetadata);
 
-    S3Object s3Object = new S3Object();
-    s3Object.setObjectContent(new ByteArrayInputStream(LOG_CONTENTS.substring(1).getBytes(StandardCharsets.UTF_8)));
-    GetObjectRequest getObjectRequest = new GetObjectRequest(TEST_BUCKET, logPath);
+    ResponseInputStream<GetObjectResponse> s3Object = S3Object.builder()
+        .build();
+    s3Object.response() = s3Object.response().toBuilder().objectContent(new ByteArrayInputStream(LOG_CONTENTS.substring(1).getBytes(StandardCharsets.UTF_8))).build();
+    GetObjectRequest getObjectRequest = GetObjectRequest.builder().bucket(TEST_BUCKET).key(logPath)
+        .build();
     getObjectRequest.setRange(1, LOG_CONTENTS.length() - 1);
-    getObjectRequest.withMatchingETagConstraint(objectMetadata.getETag());
+    getObjectRequest.matchingETagConstraint(objectMetadata.eTag());
     EasyMock.expect(s3Client.getObject(getObjectRequest)).andReturn(s3Object);
     EasyMock.replay(s3Client);
 
@@ -511,14 +526,16 @@ public class S3TaskLogsTest extends EasyMockSupport
   {
     EasyMock.reset(s3Client);
     String logPath = TEST_PREFIX + "/" + KEY_1 + "/report.json";
-    ObjectMetadata objectMetadata = new ObjectMetadata();
-    objectMetadata.setContentLength(REPORT_CONTENTS.length());
+    HeadObjectResponse objectMetadata = HeadObjectResponse.builder()
+        .build();
     EasyMock.expect(s3Client.getObjectMetadata(TEST_BUCKET, logPath)).andReturn(objectMetadata);
-    S3Object s3Object = new S3Object();
-    s3Object.setObjectContent(new ByteArrayInputStream(REPORT_CONTENTS.getBytes(StandardCharsets.UTF_8)));
-    GetObjectRequest getObjectRequest = new GetObjectRequest(TEST_BUCKET, logPath);
+    ResponseInputStream<GetObjectResponse> s3Object = S3Object.builder()
+        .build();
+    s3Object.response() = s3Object.response().toBuilder().objectContent(new ByteArrayInputStream(REPORT_CONTENTS.getBytes(StandardCharsets.UTF_8))).build();
+    GetObjectRequest getObjectRequest = GetObjectRequest.builder().bucket(TEST_BUCKET).key(logPath)
+        .build();
     getObjectRequest.setRange(0, REPORT_CONTENTS.length() - 1);
-    getObjectRequest.withMatchingETagConstraint(objectMetadata.getETag());
+    getObjectRequest.matchingETagConstraint(objectMetadata.eTag());
     EasyMock.expect(s3Client.getObject(getObjectRequest)).andReturn(s3Object);
     EasyMock.replay(s3Client);
 
@@ -538,14 +555,16 @@ public class S3TaskLogsTest extends EasyMockSupport
   {
     EasyMock.reset(s3Client);
     String logPath = TEST_PREFIX + "/" + KEY_1 + "/status.json";
-    ObjectMetadata objectMetadata = new ObjectMetadata();
-    objectMetadata.setContentLength(STATUS_CONTENTS.length());
+    HeadObjectResponse objectMetadata = HeadObjectResponse.builder()
+        .build();
     EasyMock.expect(s3Client.getObjectMetadata(TEST_BUCKET, logPath)).andReturn(objectMetadata);
-    S3Object s3Object = new S3Object();
-    s3Object.setObjectContent(new ByteArrayInputStream(STATUS_CONTENTS.getBytes(StandardCharsets.UTF_8)));
-    GetObjectRequest getObjectRequest = new GetObjectRequest(TEST_BUCKET, logPath);
+    ResponseInputStream<GetObjectResponse> s3Object = S3Object.builder()
+        .build();
+    s3Object.response() = s3Object.response().toBuilder().objectContent(new ByteArrayInputStream(STATUS_CONTENTS.getBytes(StandardCharsets.UTF_8))).build();
+    GetObjectRequest getObjectRequest = GetObjectRequest.builder().bucket(TEST_BUCKET).key(logPath)
+        .build();
     getObjectRequest.setRange(0, STATUS_CONTENTS.length() - 1);
-    getObjectRequest.withMatchingETagConstraint(objectMetadata.getETag());
+    getObjectRequest.matchingETagConstraint(objectMetadata.eTag());
     EasyMock.expect(s3Client.getObject(getObjectRequest)).andReturn(s3Object);
     EasyMock.replay(s3Client);
 
@@ -565,21 +584,23 @@ public class S3TaskLogsTest extends EasyMockSupport
   {
     EasyMock.reset(s3Client);
     // throw exception on first call
-    AmazonS3Exception awsError = new AmazonS3Exception("AWS Error");
-    awsError.setErrorCode("503");
-    awsError.setStatusCode(503);
+    S3Exception awsError = new S3Exception("AWS Error");
+    awsError = awsError.toBuilder().errorCode("503").build();
+    awsError = awsError.toBuilder().statusCode(503).build();
     EasyMock.expect(s3Client.getObjectMetadata(EasyMock.anyString(), EasyMock.anyString())).andThrow(awsError);
     EasyMock.expectLastCall().once();
 
     String logPath = TEST_PREFIX + "/" + KEY_1 + "/status.json";
-    ObjectMetadata objectMetadata = new ObjectMetadata();
-    objectMetadata.setContentLength(STATUS_CONTENTS.length());
+    HeadObjectResponse objectMetadata = HeadObjectResponse.builder()
+        .build();
     EasyMock.expect(s3Client.getObjectMetadata(TEST_BUCKET, logPath)).andReturn(objectMetadata);
-    S3Object s3Object = new S3Object();
-    s3Object.setObjectContent(new ByteArrayInputStream(STATUS_CONTENTS.getBytes(StandardCharsets.UTF_8)));
-    GetObjectRequest getObjectRequest = new GetObjectRequest(TEST_BUCKET, logPath);
+    ResponseInputStream<GetObjectResponse> s3Object = S3Object.builder()
+        .build();
+    s3Object.response() = s3Object.response().toBuilder().objectContent(new ByteArrayInputStream(STATUS_CONTENTS.getBytes(StandardCharsets.UTF_8))).build();
+    GetObjectRequest getObjectRequest = GetObjectRequest.builder().bucket(TEST_BUCKET).key(logPath)
+        .build();
     getObjectRequest.setRange(0, STATUS_CONTENTS.length() - 1);
-    getObjectRequest.withMatchingETagConstraint(objectMetadata.getETag());
+    getObjectRequest.matchingETagConstraint(objectMetadata.eTag());
     EasyMock.expect(s3Client.getObject(getObjectRequest)).andReturn(s3Object);
     EasyMock.expectLastCall().once();
 
@@ -616,8 +637,10 @@ public class S3TaskLogsTest extends EasyMockSupport
     s3Client.upload(EasyMock.anyObject(PutObjectRequest.class));
     EasyMock.expectLastCall().once();
 
-    AccessControlList aclExpected = new AccessControlList();
-    aclExpected.setOwner(new Owner(ownerId, ownerDisplayName));
+    AccessControlPolicy aclExpected = AccessControlPolicy.builder()
+        .build();
+    aclExpected = aclExpected.toBuilder().owner(Owner.builder().id(ownerId).displayName(ownerDisplayName)
+        .build()).build();
 
     EasyMock.expect(s3Client.getBucketAcl(TEST_BUCKET))
             .andReturn(aclExpected)
@@ -640,7 +663,7 @@ public class S3TaskLogsTest extends EasyMockSupport
 
     s3TaskLogs.pushTaskLog(taskId, logFile);
 
-    return aclExpected.getGrantsAsList();
+    return aclExpected.grantsAsList();
   }
 
   @Test
@@ -656,9 +679,10 @@ public class S3TaskLogsTest extends EasyMockSupport
   public void testMatchingEtagConstraintWithEnsureQuotated()
   {
     String eTag = "etag";
-    final GetObjectRequest request = new GetObjectRequest(null, null)
-        .withMatchingETagConstraint(S3TaskLogs.ensureQuotated(eTag))
-        .withRange(0, 1);
-    Assert.assertEquals("\"" + eTag + "\"", request.getMatchingETagConstraints().get(0));
+    final GetObjectRequest request = GetObjectRequest.builder().bucket(null).key(null)
+        .matchingETagConstraint(S3TaskLogs.ensureQuotated(eTag))
+        .range(0, 1)
+        .build();
+    Assert.assertEquals("\"" + eTag + "\"", request.matchingETagConstraints().get(0));
   }
 }

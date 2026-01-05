@@ -19,14 +19,6 @@
 
 package org.apache.druid.storage.s3;
 
-import com.amazonaws.AmazonClientException;
-import com.amazonaws.AmazonServiceException;
-import com.amazonaws.services.s3.model.AmazonS3Exception;
-import com.amazonaws.services.s3.model.ListObjectsV2Request;
-import com.amazonaws.services.s3.model.ListObjectsV2Result;
-import com.amazonaws.services.s3.model.ObjectMetadata;
-import com.amazonaws.services.s3.model.S3Object;
-import com.amazonaws.services.s3.model.S3ObjectSummary;
 import com.google.common.base.Predicate;
 import com.google.common.base.Strings;
 import com.google.common.io.ByteSource;
@@ -45,6 +37,15 @@ import org.apache.druid.java.util.common.logger.Logger;
 import org.apache.druid.segment.loading.SegmentLoadingException;
 import org.apache.druid.segment.loading.URIDataPuller;
 import org.apache.druid.utils.CompressionUtils;
+import software.amazon.awssdk.awscore.exception.AwsServiceException;
+import software.amazon.awssdk.core.ResponseInputStream;
+import software.amazon.awssdk.core.exception.SdkException;
+import software.amazon.awssdk.services.s3.model.GetObjectResponse;
+import software.amazon.awssdk.services.s3.model.HeadObjectResponse;
+import software.amazon.awssdk.services.s3.model.ListObjectsV2Request;
+import software.amazon.awssdk.services.s3.model.ListObjectsV2Response;
+import software.amazon.awssdk.services.s3.model.S3Exception;
+import software.amazon.awssdk.services.s3.model.S3Object;
 
 import javax.annotation.Nonnull;
 import javax.tools.FileObject;
@@ -112,15 +113,16 @@ public class S3DataSegmentPuller implements URIDataPuller
         return result;
       } else if (s3Coords.getPath().endsWith("/")) {
         // segment is not compressed, list objects and pull them all
-        final ListObjectsV2Result list = S3Utils.retryS3Operation(
+        final ListObjectsV2Response list = S3Utils.retryS3Operation(
             () -> s3Client.listObjectsV2(
-                new ListObjectsV2Request().withBucketName(s3Coords.getBucket())
-                                          .withPrefix(s3Coords.getPath())
+                ListObjectsV2Request.builder().bucket(s3Coords.getBucket())
+                    .prefix(s3Coords.getPath())
+                .build()
             )
         );
         FileUtils.FileCopyResult copyResult = new FileUtils.FileCopyResult();
-        for (S3ObjectSummary objectSummary : list.getObjectSummaries()) {
-          final CloudObjectLocation objectLocation = S3Utils.summaryToCloudObjectLocation(objectSummary);
+        for (S3Object s3Object : list.contents()) {
+          final CloudObjectLocation objectLocation = new CloudObjectLocation(s3Coords.getBucket(), s3Object.key());
           final URI uri = objectLocation.toUri(S3StorageDruidModule.SCHEME);
           final ByteSource byteSource = getByteSource(uri);
           final File outFile = new File(outDir, Paths.get(objectLocation.getPath()).getFileName().toString());
@@ -160,7 +162,7 @@ public class S3DataSegmentPuller implements URIDataPuller
         try {
           return buildFileObject(uri).openInputStream();
         }
-        catch (AmazonServiceException e) {
+        catch (AwsServiceException e) {
           if (e.getCause() != null) {
             if (S3Utils.S3RETRY.apply(e)) {
               throw new IOException("Recoverable exception", e);
@@ -179,20 +181,20 @@ public class S3DataSegmentPuller implements URIDataPuller
     try {
       return buildFileObject(uri).openInputStream();
     }
-    catch (AmazonServiceException e) {
+    catch (AwsServiceException e) {
       throw new IOE(e, "Could not load URI [%s]", uri);
     }
   }
 
-  public FileObject buildFileObject(final URI uri) throws AmazonServiceException
+  public FileObject buildFileObject(final URI uri) throws AwsServiceException
   {
     final CloudObjectLocation coords = new CloudObjectLocation(S3Utils.checkURI(uri));
     final String path = uri.getPath();
 
     return new FileObject()
     {
-      S3Object s3Object = null;
-      ObjectMetadata objectMetadata = null;
+      ResponseInputStream<GetObjectResponse> s3Object = null;
+      HeadObjectResponse objectMetadata = null;
 
       @Override
       public URI toUri()
@@ -219,7 +221,7 @@ public class S3DataSegmentPuller implements URIDataPuller
             s3Object = s3Client.getObject(coords.getBucket(), coords.getPath());
           }
 
-          final InputStream in = s3Object.getObjectContent();
+          final InputStream in = s3Object;
           final Closer closer = Closer.create();
           closer.register(in);
           closer.register(s3Object);
@@ -233,7 +235,7 @@ public class S3DataSegmentPuller implements URIDataPuller
             }
           };
         }
-        catch (AmazonServiceException e) {
+        catch (AwsServiceException e) {
           throw new IOE(e, "Could not load S3 URI [%s]", uri);
         }
       }
@@ -266,12 +268,12 @@ public class S3DataSegmentPuller implements URIDataPuller
       public long getLastModified()
       {
         if (s3Object != null) {
-          return s3Object.getObjectMetadata().getLastModified().getTime();
+          return s3Object.response().lastModified().toEpochMilli();
         }
         if (objectMetadata == null) {
           objectMetadata = S3Utils.getSingleObjectMetadata(s3Client, coords.getBucket(), coords.getPath());
         }
-        return objectMetadata.getLastModified().getTime();
+        return objectMetadata.lastModified().toEpochMilli();
       }
 
       @Override
@@ -300,11 +302,11 @@ public class S3DataSegmentPuller implements URIDataPuller
   {
     try {
       final CloudObjectLocation coords = new CloudObjectLocation(S3Utils.checkURI(uri));
-      final ObjectMetadata objectMetadata =
+      final HeadObjectResponse objectMetadata =
           S3Utils.getSingleObjectMetadata(s3Client, coords.getBucket(), coords.getPath());
-      return StringUtils.format("%d", objectMetadata.getLastModified().getTime());
+      return StringUtils.format("%d", objectMetadata.lastModified().toEpochMilli());
     }
-    catch (AmazonClientException e) {
+    catch (SdkException e) {
       if (AWSClientUtil.isClientExceptionRecoverable(e)) {
         // The recoverable logic is always true for IOException, so we want to only pass IOException if it is recoverable
         throw new IOE(e, "Could not fetch last modified timestamp from URI [%s]", uri);
@@ -321,7 +323,7 @@ public class S3DataSegmentPuller implements URIDataPuller
           () -> S3Utils.isObjectInBucketIgnoringPermission(s3Client, coords.getBucket(), coords.getPath())
       );
     }
-    catch (AmazonS3Exception | IOException e) {
+    catch (S3Exception | IOException e) {
       throw new SegmentLoadingException(e, "S3 fail! Key[%s]", coords);
     }
     catch (Exception e) {

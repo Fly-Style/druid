@@ -19,15 +19,15 @@
 
 package org.apache.druid.storage.s3;
 
-import com.amazonaws.services.s3.model.CopyObjectRequest;
-import com.amazonaws.services.s3.model.GetObjectMetadataRequest;
-import com.amazonaws.services.s3.model.GetObjectRequest;
-import com.amazonaws.services.s3.model.InitiateMultipartUploadRequest;
-import com.amazonaws.services.s3.model.PutObjectRequest;
-import com.amazonaws.services.s3.model.UploadPartRequest;
 import com.fasterxml.jackson.annotation.JsonSubTypes;
 import com.fasterxml.jackson.annotation.JsonSubTypes.Type;
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
+import software.amazon.awssdk.services.s3.model.CopyObjectRequest;
+import software.amazon.awssdk.services.s3.model.CreateMultipartUploadRequest;
+import software.amazon.awssdk.services.s3.model.GetObjectRequest;
+import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
+import software.amazon.awssdk.services.s3.model.PutObjectRequest;
+import software.amazon.awssdk.services.s3.model.UploadPartRequest;
 
 /**
  * Server-side encryption decorator for Amazon S3.
@@ -51,7 +51,7 @@ public interface ServerSideEncryption
     return request;
   }
 
-  default GetObjectMetadataRequest decorate(GetObjectMetadataRequest request)
+  default HeadObjectRequest decorate(HeadObjectRequest request)
   {
     return request;
   }
@@ -61,7 +61,7 @@ public interface ServerSideEncryption
     return request;
   }
 
-  default InitiateMultipartUploadRequest decorate(InitiateMultipartUploadRequest request)
+  default CreateMultipartUploadRequest decorate(CreateMultipartUploadRequest request)
   {
     return request;
   }

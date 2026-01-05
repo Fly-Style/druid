@@ -19,7 +19,6 @@
 
 package org.apache.druid.data.input.kinesis;
 
-import com.amazonaws.services.kinesis.model.Record;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.google.common.base.Preconditions;
 import org.apache.druid.data.input.InputEntity;
@@ -30,6 +29,7 @@ import org.apache.druid.data.input.impl.JsonInputFormat;
 import org.apache.druid.data.input.impl.TimestampSpec;
 import org.apache.druid.indexing.seekablestream.SettableByteEntity;
 import org.apache.druid.java.util.common.DateTimes;
+import software.amazon.awssdk.services.kinesis.model.Record;
 
 import javax.annotation.Nullable;
 

@@ -19,13 +19,6 @@
 
 package org.apache.druid.storage.s3;
 
-import com.amazonaws.ClientConfiguration;
-import com.amazonaws.ClientConfigurationFactory;
-import com.amazonaws.Protocol;
-import com.amazonaws.auth.AWSCredentialsProvider;
-import com.amazonaws.client.builder.AwsClientBuilder.EndpointConfiguration;
-import com.amazonaws.services.s3.AmazonS3Client;
-import com.amazonaws.services.s3.AmazonS3ClientBuilder;
 import com.fasterxml.jackson.core.Version;
 import com.fasterxml.jackson.databind.Module;
 import com.google.common.base.Supplier;
@@ -44,7 +37,13 @@ import org.apache.druid.guice.JsonConfigProvider;
 import org.apache.druid.guice.LazySingleton;
 import org.apache.druid.initialization.DruidModule;
 import org.apache.druid.java.util.common.logger.Logger;
+import software.amazon.awssdk.auth.credentials.AwsCredentialsProvider;
+import software.amazon.awssdk.regions.Region;
+import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.S3ClientBuilder;
+import software.amazon.awssdk.services.s3.S3Configuration;
 
+import java.net.URI;
 import java.util.List;
 
 /**
@@ -125,27 +124,26 @@ public class S3StorageDruidModule implements DruidModule
   // AmazonS3ClientBuilder and/or S3StorageConfig overridden before being built.
   @Provides
   public ServerSideEncryptingAmazonS3.Builder getServerSideEncryptingAmazonS3Builder(
-      AWSCredentialsProvider provider,
+      AwsCredentialsProvider provider,
       AWSProxyConfig proxyConfig,
       AWSEndpointConfig endpointConfig,
       AWSClientConfig clientConfig,
       S3StorageConfig storageConfig
   )
   {
-    final ClientConfiguration configuration = new ClientConfigurationFactory().getConfig();
-    final Protocol protocol = S3Utils.determineProtocol(clientConfig, endpointConfig);
-    final AmazonS3ClientBuilder amazonS3ClientBuilder = AmazonS3Client
+    final S3ClientBuilder amazonS3ClientBuilder = S3Client
         .builder()
-        .withCredentials(provider)
-        .withClientConfiguration(S3Utils.setProxyConfig(configuration, proxyConfig).withProtocol(protocol))
-        .withChunkedEncodingDisabled(clientConfig.isDisableChunkedEncoding())
-        .withPathStyleAccessEnabled(clientConfig.isEnablePathStyleAccess())
-        .withForceGlobalBucketAccessEnabled(clientConfig.isForceGlobalBucketAccessEnabled());
+        .credentialsProvider(provider)
+        .serviceConfiguration(S3Configuration.builder()
+            .chunkedEncodingEnabled(!clientConfig.isDisableChunkedEncoding())
+            .pathStyleAccessEnabled(clientConfig.isEnablePathStyleAccess())
+            .build());
 
     if (StringUtils.isNotEmpty(endpointConfig.getUrl())) {
-      amazonS3ClientBuilder.setEndpointConfiguration(
-          new EndpointConfiguration(endpointConfig.getUrl(), endpointConfig.getSigningRegion())
-      );
+      amazonS3ClientBuilder.endpointOverride(URI.create(endpointConfig.getUrl()));
+      if (StringUtils.isNotEmpty(endpointConfig.getSigningRegion())) {
+        amazonS3ClientBuilder.region(Region.of(endpointConfig.getSigningRegion()));
+      }
     }
 
     return ServerSideEncryptingAmazonS3.builder()

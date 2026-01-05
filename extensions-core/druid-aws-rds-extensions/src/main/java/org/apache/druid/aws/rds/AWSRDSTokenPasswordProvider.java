@@ -19,9 +19,6 @@
 
 package org.apache.druid.aws.rds;
 
-import com.amazonaws.auth.AWSCredentialsProvider;
-import com.amazonaws.services.rds.auth.GetIamAuthTokenRequest;
-import com.amazonaws.services.rds.auth.RdsIamAuthTokenGenerator;
 import com.fasterxml.jackson.annotation.JacksonInject;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonIgnore;
@@ -30,6 +27,10 @@ import com.google.common.base.Preconditions;
 import org.apache.druid.java.util.common.RE;
 import org.apache.druid.java.util.common.logger.Logger;
 import org.apache.druid.metadata.PasswordProvider;
+import software.amazon.awssdk.auth.credentials.AwsCredentialsProvider;
+import software.amazon.awssdk.regions.Region;
+import software.amazon.awssdk.services.rds.RdsUtilities;
+import software.amazon.awssdk.services.rds.model.GenerateAuthenticationTokenRequest;
 
 /**
  * Generates the AWS token same as aws cli
@@ -47,7 +48,7 @@ public class AWSRDSTokenPasswordProvider implements PasswordProvider
   private final int port;
   private final String region;
 
-  private final AWSCredentialsProvider awsCredentialsProvider;
+  private final AwsCredentialsProvider awsCredentialsProvider;
 
   @JsonCreator
   public AWSRDSTokenPasswordProvider(
@@ -55,7 +56,7 @@ public class AWSRDSTokenPasswordProvider implements PasswordProvider
       @JsonProperty("host") String host,
       @JsonProperty("port") int port,
       @JsonProperty("region") String region,
-      @JacksonInject AWSCredentialsProvider awsCredentialsProvider
+      @JacksonInject AwsCredentialsProvider awsCredentialsProvider
   )
   {
     this.user = Preconditions.checkNotNull(user, "null metadataStorage user");
@@ -98,22 +99,20 @@ public class AWSRDSTokenPasswordProvider implements PasswordProvider
   public String getPassword()
   {
     try {
-      RdsIamAuthTokenGenerator generator = RdsIamAuthTokenGenerator
+      RdsUtilities rdsUtilities = RdsUtilities
           .builder()
-          .credentials(awsCredentialsProvider)
-          .region(region)
+          .credentialsProvider(awsCredentialsProvider)
+          .region(Region.of(region))
           .build();
 
-      String authToken = generator.getAuthToken(
-          GetIamAuthTokenRequest
+      return rdsUtilities.generateAuthenticationToken(
+          GenerateAuthenticationTokenRequest
               .builder()
               .hostname(host)
               .port(port)
-              .userName(user)
+              .username(user)
               .build()
       );
-
-      return authToken;
     }
     catch (Exception ex) {
       LOGGER.error(ex, "Couldn't generate AWS token.");

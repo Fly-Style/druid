@@ -19,7 +19,6 @@
 
 package org.apache.druid.common.aws;
 
-import com.amazonaws.services.s3.S3ClientOptions;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
 public class AWSClientConfig
@@ -28,13 +27,13 @@ public class AWSClientConfig
   private String protocol = "https"; // The default of aws-java-sdk
 
   @JsonProperty
-  private boolean disableChunkedEncoding = S3ClientOptions.DEFAULT_CHUNKED_ENCODING_DISABLED;
+  private boolean disableChunkedEncoding = false;
 
   @JsonProperty
-  private boolean enablePathStyleAccess = S3ClientOptions.DEFAULT_PATH_STYLE_ACCESS;
+  private boolean enablePathStyleAccess = false;
 
   @JsonProperty
-  protected boolean forceGlobalBucketAccessEnabled = S3ClientOptions.DEFAULT_FORCE_GLOBAL_BUCKET_ACCESS_ENABLED;
+  protected boolean forceGlobalBucketAccessEnabled = false;
 
   public String getProtocol()
   {

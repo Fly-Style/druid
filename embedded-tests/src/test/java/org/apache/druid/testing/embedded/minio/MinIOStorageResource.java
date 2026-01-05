@@ -19,16 +19,16 @@
 
 package org.apache.druid.testing.embedded.minio;
 
-import com.amazonaws.auth.AWSStaticCredentialsProvider;
-import com.amazonaws.auth.BasicAWSCredentials;
-import com.amazonaws.client.builder.AwsClientBuilder;
-import com.amazonaws.services.s3.AmazonS3;
-import com.amazonaws.services.s3.AmazonS3Client;
 import org.apache.druid.common.aws.AWSModule;
 import org.apache.druid.storage.s3.S3StorageDruidModule;
 import org.apache.druid.testing.embedded.EmbeddedDruidCluster;
 import org.apache.druid.testing.embedded.TestcontainerResource;
 import org.testcontainers.containers.MinIOContainer;
+import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
+import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
+import software.amazon.awssdk.awscore.client.builder.AwsSyncClientBuilder;
+import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.CreateBucketRequest;
 
 /**
  * A MinIO container resource for use in embedded tests as deep storage.
@@ -44,7 +44,7 @@ public class MinIOStorageResource extends TestcontainerResource<MinIOContainer>
 
   private final String bucket;
   private final String baseKey;
-  private AmazonS3 s3Client;
+  private S3Client s3Client;
 
   public MinIOStorageResource()
   {
@@ -69,7 +69,8 @@ public class MinIOStorageResource extends TestcontainerResource<MinIOContainer>
   public void onStarted(EmbeddedDruidCluster cluster)
   {
     s3Client = createS3Client();
-    s3Client.createBucket(bucket);
+    s3Client.createBucket(CreateBucketRequest.builder().bucket(bucket)
+        .build());
 
     cluster.addExtension(S3StorageDruidModule.class);
     cluster.addExtension(AWSModule.class);
@@ -118,19 +119,19 @@ public class MinIOStorageResource extends TestcontainerResource<MinIOContainer>
     return getContainer().getS3URL();
   }
 
-  public AmazonS3 getS3Client()
+  public S3Client getS3Client()
   {
     ensureRunning();
     return s3Client;
   }
 
-  private AmazonS3 createS3Client()
+  private S3Client createS3Client()
   {
-    return AmazonS3Client
+    return S3Client
         .builder()
-        .withEndpointConfiguration(new AwsClientBuilder.EndpointConfiguration(getEndpointUrl(), "us-east-1"))
-        .withCredentials(new AWSStaticCredentialsProvider(new BasicAWSCredentials(getAccessKey(), getSecretKey())))
-        .withPathStyleAccessEnabled(true)
+        .endpointOverride(new AwsSyncClientBuilder.EndpointConfiguration(getEndpointUrl(), "us-east-1"))
+        .credentialsProvider(StaticCredentialsProvider.create(AwsBasicCredentials.create(getAccessKey(), getSecretKey())))
+        .pathStyleAccessEnabled(true)
         .build();
   }
 }

@@ -39,12 +39,12 @@
             <version>${project.parent.version}</version>
         </dependency>
         <dependency>
-            <groupId>com.amazonaws</groupId>
-            <artifactId>aws-java-sdk-ec2</artifactId>
+          <groupId>software.amazon.awssdk</groupId>
+          <artifactId>ec2</artifactId>
         </dependency>
         <dependency>
-            <groupId>com.amazonaws</groupId>
-            <artifactId>aws-java-sdk-s3</artifactId>
+          <groupId>software.amazon.awssdk</groupId>
+          <artifactId>s3</artifactId>
         </dependency>
         <dependency>
             <groupId>org.checkerframework</groupId>
@@ -71,19 +71,15 @@
             <artifactId>jackson-databind</artifactId>
         </dependency>
         <dependency>
-            <groupId>com.amazonaws</groupId>
-            <artifactId>aws-java-sdk-core</artifactId>
-        </dependency>
-        <dependency>
             <groupId>jakarta.validation</groupId>
             <artifactId>jakarta.validation-api</artifactId>
         </dependency>
 
         <!-- Runtime -->
-        <!-- WebIdentityTokenProvider requires runtime dependency on aws-java-sdk-sts -->
+        <!-- WebIdentityTokenCredentialsProvider requires runtime dependency on sts -->
         <dependency>
-            <groupId>com.amazonaws</groupId>
-            <artifactId>aws-java-sdk-sts</artifactId>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>sts</artifactId>
             <scope>runtime</scope>
         </dependency>
 

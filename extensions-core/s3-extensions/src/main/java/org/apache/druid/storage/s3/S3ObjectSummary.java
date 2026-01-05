@@ -19,24 +19,53 @@
 
 package org.apache.druid.storage.s3;
 
-import software.amazon.awssdk.services.s3.model.CopyObjectRequest;
-import software.amazon.awssdk.services.s3.model.PutObjectRequest;
+import software.amazon.awssdk.services.s3.model.S3Object;
 
-class S3ServerSideEncryption implements ServerSideEncryption
+import java.time.Instant;
+
+/**
+ * Wrapper class that holds an S3Object along with its bucket name.
+ * In AWS SDK v2, S3Object doesn't contain bucket information, so this class
+ * provides a way to associate the bucket with the object.
+ */
+public class S3ObjectSummary
 {
-  @Override
-  public PutObjectRequest decorate(PutObjectRequest request)
+  private final String bucket;
+  private final S3Object s3Object;
+
+  public S3ObjectSummary(String bucket, S3Object s3Object)
   {
-    return request.toBuilder()
-        .serverSideEncryption(software.amazon.awssdk.services.s3.model.ServerSideEncryption.AES256)
-        .build();
+    this.bucket = bucket;
+    this.s3Object = s3Object;
   }
 
-  @Override
-  public CopyObjectRequest decorate(CopyObjectRequest request)
+  public String bucket()
   {
-    return request.toBuilder()
-        .serverSideEncryption(software.amazon.awssdk.services.s3.model.ServerSideEncryption.AES256)
-        .build();
+    return bucket;
+  }
+
+  public String key()
+  {
+    return s3Object.key();
+  }
+
+  public long size()
+  {
+    return s3Object.size();
+  }
+
+  public String eTag()
+  {
+    return s3Object.eTag();
+  }
+
+  public Instant lastModified()
+  {
+    return s3Object.lastModified();
+  }
+
+  public S3Object getS3Object()
+  {
+    return s3Object;
   }
 }

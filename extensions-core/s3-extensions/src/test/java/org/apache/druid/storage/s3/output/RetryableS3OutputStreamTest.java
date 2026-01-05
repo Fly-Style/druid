@@ -19,17 +19,6 @@
 
 package org.apache.druid.storage.s3.output;
 
-import com.amazonaws.AmazonClientException;
-import com.amazonaws.SdkClientException;
-import com.amazonaws.services.s3.AmazonS3;
-import com.amazonaws.services.s3.model.AbortMultipartUploadRequest;
-import com.amazonaws.services.s3.model.CompleteMultipartUploadRequest;
-import com.amazonaws.services.s3.model.CompleteMultipartUploadResult;
-import com.amazonaws.services.s3.model.InitiateMultipartUploadRequest;
-import com.amazonaws.services.s3.model.InitiateMultipartUploadResult;
-import com.amazonaws.services.s3.model.PartETag;
-import com.amazonaws.services.s3.model.UploadPartRequest;
-import com.amazonaws.services.s3.model.UploadPartResult;
 import org.apache.druid.java.util.common.HumanReadableBytes;
 import org.apache.druid.java.util.common.IOE;
 import org.apache.druid.java.util.common.StringUtils;
@@ -45,6 +34,17 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.ExpectedException;
 import org.junit.rules.TemporaryFolder;
+import software.amazon.awssdk.core.exception.SdkClientException;
+import software.amazon.awssdk.core.exception.SdkException;
+import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.AbortMultipartUploadRequest;
+import software.amazon.awssdk.services.s3.model.CompleteMultipartUploadRequest;
+import software.amazon.awssdk.services.s3.model.CompleteMultipartUploadResponse;
+import software.amazon.awssdk.services.s3.model.CompletedPart;
+import software.amazon.awssdk.services.s3.model.CreateMultipartUploadRequest;
+import software.amazon.awssdk.services.s3.model.CreateMultipartUploadResponse;
+import software.amazon.awssdk.services.s3.model.UploadPartRequest;
+import software.amazon.awssdk.services.s3.model.UploadPartResponse;
 
 import javax.annotation.Nullable;
 import java.io.File;
@@ -231,33 +231,35 @@ public class RetryableS3OutputStreamTest
 
     private TestAmazonS3(int totalUploadFailures)
     {
-      super(EasyMock.createMock(AmazonS3.class), new NoopServerSideEncryption(), new S3TransferConfig());
+      super(EasyMock.createMock(S3Client.class), new NoopServerSideEncryption(), new S3TransferConfig());
       this.uploadFailuresLeft = totalUploadFailures;
     }
 
     @Override
-    public InitiateMultipartUploadResult initiateMultipartUpload(InitiateMultipartUploadRequest request)
+    public CreateMultipartUploadResponse initiateMultipartUpload(CreateMultipartUploadRequest request)
         throws SdkClientException
     {
-      InitiateMultipartUploadResult result = new InitiateMultipartUploadResult();
-      result.setUploadId("uploadId");
+      CreateMultipartUploadResponse result = CreateMultipartUploadResponse.builder()
+          .build();
+      result = result.toBuilder().uploadId("uploadId").build();
       return result;
     }
 
     @Override
-    public UploadPartResult uploadPart(UploadPartRequest request) throws SdkClientException
+    public UploadPartResponse uploadPart(UploadPartRequest request) throws SdkClientException
     {
       if (uploadFailuresLeft > 0) {
-        throw new AmazonClientException(
+        throw new SdkException(
             new IOE("Upload failure test. Remaining failures [%s]", --uploadFailuresLeft)
         );
       }
       synchronized (partRequests) {
         partRequests.add(request);
       }
-      UploadPartResult result = new UploadPartResult();
-      result.setETag(StringUtils.format("etag-%s", request.getPartNumber()));
-      result.setPartNumber(request.getPartNumber());
+      UploadPartResponse result = UploadPartResponse.builder()
+          .build();
+      result = result.toBuilder().eTag(StringUtils.format("etag-%s", request.partNumber())).build();
+      result = result.toBuilder().partNumber(request.partNumber()).build();
       return result;
     }
 
@@ -268,11 +270,12 @@ public class RetryableS3OutputStreamTest
     }
 
     @Override
-    public CompleteMultipartUploadResult completeMultipartUpload(CompleteMultipartUploadRequest request)
+    public CompleteMultipartUploadResponse completeMultipartUpload(CompleteMultipartUploadRequest request)
         throws SdkClientException
     {
       completeRequest = request;
-      return new CompleteMultipartUploadResult();
+      return CompleteMultipartUploadResponse.builder()
+          .build();
     }
 
     private void assertCompleted(long chunkSize, long expectedFileSize)
@@ -286,22 +289,22 @@ public class RetryableS3OutputStreamTest
       // Verify sizes of uploaded chunks
       int numSmallerChunks = 0;
       for (UploadPartRequest part : partRequests) {
-        Assert.assertTrue(part.getPartSize() <= chunkSize);
-        if (part.getPartSize() < chunkSize) {
+        Assert.assertTrue(part.partSize() <= chunkSize);
+        if (part.partSize() < chunkSize) {
           ++numSmallerChunks;
         }
       }
       Assert.assertTrue(numSmallerChunks <= 1);
 
-      final List<PartETag> eTags = completeRequest.getPartETags();
+      final List<CompletedPart> eTags = completeRequest.partETags();
       Assert.assertEquals(partRequests.size(), eTags.size());
       Assert.assertEquals(
           partNumbersFromRequest,
-          eTags.stream().map(PartETag::getPartNumber).collect(Collectors.toSet())
+          eTags.stream().map(CompletedPart::getPartNumber).collect(Collectors.toSet())
       );
       Assert.assertEquals(
           partNumbersFromRequest.stream().map(partNumber -> "etag-" + partNumber).collect(Collectors.toSet()),
-          eTags.stream().map(PartETag::getETag).collect(Collectors.toSet())
+          eTags.stream().map(CompletedPart::getETag).collect(Collectors.toSet())
       );
       Assert.assertEquals(
           expectedFileSize,

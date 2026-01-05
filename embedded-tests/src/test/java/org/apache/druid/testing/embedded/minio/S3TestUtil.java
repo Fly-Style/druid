@@ -19,27 +19,32 @@
 
 package org.apache.druid.testing.embedded.minio;
 
-import com.amazonaws.services.s3.AmazonS3;
-import com.amazonaws.services.s3.model.DeleteObjectsRequest;
-import com.amazonaws.services.s3.model.DeleteObjectsRequest.KeyVersion;
-import com.amazonaws.services.s3.model.ListObjectsRequest;
-import com.amazonaws.services.s3.model.ObjectListing;
-import com.amazonaws.services.s3.model.S3ObjectSummary;
 import org.apache.druid.java.util.common.logger.Logger;
 import org.apache.druid.testing.embedded.indexing.Resources;
+import software.amazon.awssdk.core.sync.RequestBody;
+import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.CreateBucketRequest;
+import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
+import software.amazon.awssdk.services.s3.model.DeleteObjectsRequest;
+import software.amazon.awssdk.services.s3.model.ListObjectsV2Request;
+import software.amazon.awssdk.services.s3.model.ListObjectsV2Response;
+import software.amazon.awssdk.services.s3.model.ObjectIdentifier;
+import software.amazon.awssdk.services.s3.model.PutObjectRequest;
+import software.amazon.awssdk.services.s3.model.S3Object;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Collectors;
 
 public class S3TestUtil
 {
   private static final Logger LOG = new Logger(S3TestUtil.class);
 
-  private final AmazonS3 s3Client;
+  private final S3Client s3Client;
   private final String path;
   private final String bucket;
 
-  public S3TestUtil(AmazonS3 s3Client, String bucket, String path)
+  public S3TestUtil(S3Client s3Client, String bucket, String path)
   {
     this.s3Client = s3Client;
     this.bucket = bucket;
@@ -48,13 +53,15 @@ public class S3TestUtil
 
   public void createBucket()
   {
-    s3Client.createBucket(bucket);
+    s3Client.createBucket(CreateBucketRequest.builder()
+                                             .bucket(bucket)
+                                             .build());
   }
 
   /**
    * Uploads a list of files to s3 at the location set in the IT config
    *
-   * @param  localFiles List of local path of files
+   * @param localFiles List of local path of files
    */
   public void uploadDataFilesToS3(List<String> localFiles)
   {
@@ -64,9 +71,11 @@ public class S3TestUtil
       s3ObjectPaths.add(s3ObjectPath);
       try {
         s3Client.putObject(
-            bucket,
-            s3ObjectPath,
-            Resources.getFileForResource(file)
+            PutObjectRequest.builder()
+                            .bucket(bucket)
+                            .key(s3ObjectPath)
+                            .build(),
+            RequestBody.fromFile(Resources.getFileForResource(file))
         );
       }
       catch (Exception e) {
@@ -82,17 +91,21 @@ public class S3TestUtil
   /**
    * Deletes a list of files to s3 at the location set in the IT config
    *
-   * @param  fileList List of path of files inside a s3 bucket
+   * @param fileList List of path of files inside a s3 bucket
    */
   public void deleteFilesFromS3(List<String> fileList)
   {
     try {
-      ArrayList<KeyVersion> keys = new ArrayList<>();
-      for (String fileName : fileList) {
-        keys.add(new KeyVersion(path + "/" + fileName));
-      }
-      DeleteObjectsRequest delObjReq = new DeleteObjectsRequest(bucket)
-          .withKeys(keys);
+      List<ObjectIdentifier> keys = fileList.stream()
+                                            .map(fileName -> ObjectIdentifier.builder()
+                                                                             .key(path + "/" + fileName)
+                                                                             .build())
+                                            .collect(Collectors.toList());
+
+      DeleteObjectsRequest delObjReq = DeleteObjectsRequest.builder()
+                                                           .bucket(bucket)
+                                                           .delete(builder -> builder.objects(keys))
+                                                           .build();
       s3Client.deleteObjects(delObjReq);
     }
     catch (Exception e) {
@@ -104,28 +117,33 @@ public class S3TestUtil
   /**
    * Deletes all files in a folder in s3 bucket
    *
-   * @param  datasource Path of folder inside a s3 bucket
+   * @param datasource Path of folder inside a s3 bucket
    */
   public void deleteFolderFromS3(String datasource)
   {
     try {
       // Delete segments created by druid
-      ListObjectsRequest listObjectsRequest = new ListObjectsRequest()
-          .withBucketName(bucket)
-          .withPrefix(path + "/" + datasource + "/");
+      String prefix = path + "/" + datasource + "/";
+      String continuationToken = null;
 
-      ObjectListing objectListing = s3Client.listObjects(listObjectsRequest);
+      do {
+        ListObjectsV2Request.Builder requestBuilder = ListObjectsV2Request.builder()
+                                                                          .bucket(bucket)
+                                                                          .prefix(prefix);
+        if (continuationToken != null) {
+          requestBuilder.continuationToken(continuationToken);
+        }
+        ListObjectsV2Response objectListing = s3Client.listObjectsV2(requestBuilder.build());
 
-      while (true) {
-        for (S3ObjectSummary objectSummary : objectListing.getObjectSummaries()) {
-          s3Client.deleteObject(bucket, objectSummary.getKey());
+        for (S3Object s3Object : objectListing.contents()) {
+          s3Client.deleteObject(DeleteObjectRequest.builder()
+                                                   .bucket(bucket)
+                                                   .key(s3Object.key())
+                                                   .build());
         }
-        if (objectListing.isTruncated()) {
-          objectListing = s3Client.listNextBatchOfObjects(objectListing);
-        } else {
-          break;
-        }
-      }
+
+        continuationToken = objectListing.isTruncated() ? objectListing.nextContinuationToken() : null;
+      } while (continuationToken != null);
     }
     catch (Exception e) {
       // Posting warn instead of error as not being able to delete files from s3 does not impact the test.

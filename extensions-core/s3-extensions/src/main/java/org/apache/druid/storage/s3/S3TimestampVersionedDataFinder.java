@@ -19,7 +19,6 @@
 
 package org.apache.druid.storage.s3;
 
-import com.amazonaws.services.s3.model.S3ObjectSummary;
 import com.google.inject.Inject;
 import org.apache.druid.data.SearchableVersionedDataFinder;
 import org.apache.druid.data.input.impl.CloudObjectLocation;
@@ -76,7 +75,7 @@ public class S3TimestampVersionedDataFinder extends S3DataSegmentPuller implemen
         if (pattern != null && !pattern.matcher(keyString).matches()) {
           continue;
         }
-        final long latestModified = objectSummary.getLastModified().getTime();
+        final long latestModified = objectSummary.lastModified().toEpochMilli();
         if (latestModified >= mostRecent) {
           mostRecent = latestModified;
           latest = objectLocation.toUri(S3StorageDruidModule.SCHEME);

@@ -19,15 +19,15 @@
 
 package org.apache.druid.storage.s3;
 
-import com.amazonaws.services.s3.model.CopyObjectRequest;
-import com.amazonaws.services.s3.model.PutObjectRequest;
-import com.amazonaws.services.s3.model.SSEAwsKeyManagementParams;
 import com.fasterxml.jackson.annotation.JacksonInject;
 import com.fasterxml.jackson.annotation.JsonCreator;
+import software.amazon.awssdk.services.s3.model.CopyObjectRequest;
+import software.amazon.awssdk.services.s3.model.PutObjectRequest;
+import software.amazon.awssdk.services.s3.model.ServerSideEncryption;
 
 import javax.annotation.Nullable;
 
-class KmsServerSideEncryption implements ServerSideEncryption
+class KmsServerSideEncryption implements org.apache.druid.storage.s3.ServerSideEncryption
 {
   @Nullable
   private final String keyId;
@@ -41,16 +41,22 @@ class KmsServerSideEncryption implements ServerSideEncryption
   @Override
   public PutObjectRequest decorate(PutObjectRequest request)
   {
-    return request.withSSEAwsKeyManagementParams(
-        keyId == null ? new SSEAwsKeyManagementParams() : new SSEAwsKeyManagementParams(keyId)
-    );
+    PutObjectRequest.Builder builder = request.toBuilder()
+        .serverSideEncryption(ServerSideEncryption.AWS_KMS);
+    if (keyId != null) {
+      builder.ssekmsKeyId(keyId);
+    }
+    return builder.build();
   }
 
   @Override
   public CopyObjectRequest decorate(CopyObjectRequest request)
   {
-    return request.withSSEAwsKeyManagementParams(
-        keyId == null ? new SSEAwsKeyManagementParams() : new SSEAwsKeyManagementParams(keyId)
-    );
+    CopyObjectRequest.Builder builder = request.toBuilder()
+        .serverSideEncryption(ServerSideEncryption.AWS_KMS);
+    if (keyId != null) {
+      builder.ssekmsKeyId(keyId);
+    }
+    return builder.build();
   }
 }

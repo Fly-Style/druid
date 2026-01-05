@@ -19,12 +19,13 @@
 
 package org.apache.druid.common.aws;
 
-import com.amazonaws.AmazonClientException;
-import com.amazonaws.AmazonServiceException;
-import com.amazonaws.services.s3.model.MultiObjectDeleteException;
 import com.google.common.collect.ImmutableList;
+import org.apache.druid.java.util.common.StringUtils;
 import org.junit.Assert;
 import org.junit.Test;
+import software.amazon.awssdk.awscore.exception.AwsErrorDetails;
+import software.amazon.awssdk.awscore.exception.AwsServiceException;
+import software.amazon.awssdk.core.exception.SdkException;
 
 import java.io.IOException;
 
@@ -33,75 +34,71 @@ public class AWSClientUtilTest
   @Test
   public void testRecoverableException_IOException()
   {
-    Assert.assertTrue(AWSClientUtil.isClientExceptionRecoverable(new AmazonClientException(new IOException())));
+    Assert.assertTrue(AWSClientUtil.isClientExceptionRecoverable(SdkException.create("", new IOException())));
+  }
+
+  @Test
+  public void testRecoverableException_StatusCode_ServerError()
+  {
+    for (Integer statusCode : ImmutableList.of(500, 502, 503)) {
+      AwsServiceException ex = AwsServiceException
+          .builder()
+          .awsErrorDetails(AwsErrorDetails.builder().build())
+          .statusCode(statusCode)
+          .build();
+      Assert.assertTrue(StringUtils.format("Status code: %s", statusCode), AWSClientUtil.isClientExceptionRecoverable(ex));
+    }
   }
 
   @Test
   public void testRecoverableException_RequestTimeout()
   {
-    AmazonServiceException ex = new AmazonServiceException(null);
-    ex.setErrorCode("RequestTimeout");
-    Assert.assertTrue(AWSClientUtil.isClientExceptionRecoverable(ex));
-  }
-
-  @Test
-  public void testRecoverableException_500()
-  {
-    AmazonServiceException ex = new AmazonServiceException(null);
-    ex.setStatusCode(500);
-    Assert.assertTrue(AWSClientUtil.isClientExceptionRecoverable(ex));
-  }
-
-  @Test
-  public void testRecoverableException_502()
-  {
-    AmazonServiceException ex = new AmazonServiceException(null);
-    ex.setStatusCode(502);
-    Assert.assertTrue(AWSClientUtil.isClientExceptionRecoverable(ex));
-  }
-
-  @Test
-  public void testRecoverableException_503()
-  {
-    AmazonServiceException ex = new AmazonServiceException(null);
-    ex.setStatusCode(503);
+    AwsServiceException ex = AwsServiceException.builder()
+        .awsErrorDetails(AwsErrorDetails.builder().errorCode("RequestTimeout").build())
+        .build();
     Assert.assertTrue(AWSClientUtil.isClientExceptionRecoverable(ex));
   }
 
   @Test
   public void testRecoverableException_ProvisionedThroughputExceededException()
   {
-    AmazonServiceException ex = new AmazonServiceException(null);
-    ex.setErrorCode("ProvisionedThroughputExceededException");
+    AwsServiceException ex = AwsServiceException.builder()
+        .awsErrorDetails(AwsErrorDetails.builder().errorCode("ProvisionedThroughputExceededException").build())
+        .build();
     Assert.assertTrue(AWSClientUtil.isClientExceptionRecoverable(ex));
   }
 
   @Test
   public void testRecoverableException_ClockSkewedError()
   {
-    AmazonServiceException ex = new AmazonServiceException(null);
-    ex.setErrorCode("RequestExpired");
+    AwsServiceException ex = AwsServiceException.builder()
+        .awsErrorDetails(AwsErrorDetails.builder().errorCode("RequestExpired").build())
+        .build();
     Assert.assertTrue(AWSClientUtil.isClientExceptionRecoverable(ex));
   }
 
   @Test
-  public void testRecoverableException_MultiObjectDeleteException()
+  public void testS3ErrorCodeRecoverable_RetryableCode()
   {
-    MultiObjectDeleteException.DeleteError retryableError = new MultiObjectDeleteException.DeleteError();
-    retryableError.setCode("RequestLimitExceeded");
-    MultiObjectDeleteException.DeleteError nonRetryableError = new MultiObjectDeleteException.DeleteError();
-    nonRetryableError.setCode("nonRetryableError");
-    MultiObjectDeleteException ex = new MultiObjectDeleteException(
-        ImmutableList.of(retryableError, nonRetryableError),
-        ImmutableList.of()
-    );
-    Assert.assertTrue(AWSClientUtil.isClientExceptionRecoverable(ex));
+    Assert.assertTrue(AWSClientUtil.isS3ErrorCodeRecoverable("RequestLimitExceeded"));
+    Assert.assertTrue(AWSClientUtil.isS3ErrorCodeRecoverable("SlowDown"));
+    Assert.assertTrue(AWSClientUtil.isS3ErrorCodeRecoverable("InternalError"));
+    Assert.assertTrue(AWSClientUtil.isS3ErrorCodeRecoverable("ServiceUnavailable"));
+    Assert.assertTrue(AWSClientUtil.isS3ErrorCodeRecoverable("ThrottlingException"));
+  }
+
+  @Test
+  public void testS3ErrorCodeRecoverable_NonRetryableCode()
+  {
+    Assert.assertFalse(AWSClientUtil.isS3ErrorCodeRecoverable("AccessDenied"));
+    Assert.assertFalse(AWSClientUtil.isS3ErrorCodeRecoverable("NoSuchKey"));
+    Assert.assertFalse(AWSClientUtil.isS3ErrorCodeRecoverable("InvalidBucketName"));
   }
 
   @Test
   public void testNonRecoverableException_RuntimeException()
   {
-    AmazonClientException ex = new AmazonClientException(new RuntimeException());
+    SdkException ex = SdkException.create("test", new RuntimeException());
     Assert.assertFalse(AWSClientUtil.isClientExceptionRecoverable(ex));
   }
 }
